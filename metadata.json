@@ -1,0 +1,6 @@
+{
+  "name": "TECH ARENA — Inter-College Technical Fest",
+  "description": "Elite inter-college technical competition platform with live terminal qualifier, anti-cheat proctoring, college rivalry leaderboard, and real-time tournament operations.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
