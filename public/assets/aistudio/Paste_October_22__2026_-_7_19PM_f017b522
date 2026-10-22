@@ -1,0 +1,935 @@
+# MASTER PROMPT: TECH ARENA ADMIN PANEL — COMPLETE IMPLEMENTATION
+
+Act as a senior full-stack developer, software architect, backend engineer, database engineer, cybersecurity specialist, and UI/UX designer.
+
+I have an existing application called **Tech Arena**, a coding and debugging competition website containing Easy, Intermediate, and Hard difficulty levels.
+
+Your task is to inspect my existing project and implement a complete, secure, fully functional administrator panel integrated with the existing application.
+
+The administrator panel must provide real-time participant statistics, participant session monitoring, activity logs, competition management, supported anti-cheat enforcement, submission tracking, score management, leaderboard generation, winner selection, CSV exports, and secure administrator authentication.
+
+You must also remove all existing seed data, fake participants, dummy scores, mock dashboard statistics, sample competition records, and unwanted demo content without breaking the application or deleting genuine production data.
+
+**IMPORTANT:** Do not create only a design, static dashboard, frontend-only prototype, or implementation plan. Make the actual code changes supported by the existing project environment. Connect all features to the real backend and database.
+
+---
+
+# 1. FIRST: INSPECT THE EXISTING PROJECT
+
+Before changing anything, inspect the complete project structure.
+
+Identify:
+
+- Frontend framework and existing application routes.
+- Backend framework and API endpoints.
+- Current authentication system.
+- Database technology and schema.
+- Existing Easy, Intermediate, and Hard competition levels.
+- Current participant login and logout functionality.
+- Challenge engine and submission evaluator.
+- Existing timer and scoring mechanisms.
+- Existing leaderboard implementation.
+- Realtime subscriptions, WebSocket connections, or database listeners.
+- Seed scripts, dummy JSON files, hardcoded sample records, and mock API responses.
+- Existing environment variables and deployment configuration.
+- Existing tests and build commands.
+
+Preserve the current participant-facing application and all working competition functionality.
+
+Reuse the existing technology stack wherever possible. Do not rebuild unrelated features, replace working authentication without necessity, or introduce a conflicting backend architecture.
+
+Before any potentially destructive database cleanup, identify the records to be removed and create an appropriate backup when persistent data may be affected.
+
+# 2. ADMINISTRATOR PASSWORD LOCK
+
+Create a dedicated administrator login page at `/admin/login`.
+
+The initial administrator password must be:
+
+**`Matrix2026`**
+
+Implement this as a securely configured initial administrator secret, not as a password comparison hardcoded in frontend JavaScript.
+
+### Login screen
+
+The page must include:
+
+- Tech Arena branding.
+- A premium lock icon.
+- A password input field.
+- A show/hide password control.
+- An Unlock Admin button.
+- A loading state during authentication.
+- A clear error message for an incorrect password.
+- A success state and redirect after authentication.
+- A logout mechanism for the administrator.
+
+### Authentication requirements
+
+1. Validate administrator credentials on the server.
+2. Allow access only after successful administrator authentication.
+3. Protect `/admin/dashboard` and every other admin route.
+4. Protect every administrative API endpoint.
+5. Protect database operations and realtime subscriptions.
+6. Reject unauthorized requests even when a user directly enters an API URL.
+7. Use secure server-managed sessions or the existing secure authentication system.
+8. Apply secure cookie settings and session expiry.
+9. Implement rate limiting and temporary throttling after repeated failed login attempts.
+10. Invalidate the server session upon logout.
+11. Prevent session reuse after logout or expiry.
+12. Never expose the administrator password, database credentials, or secret API keys in browser bundles, public API responses, or client-side environment variables.
+
+Configure the initial password through a server-side environment variable, such as `ADMIN_ACCESS_PASSWORD=Matrix2026`, or an equivalent protected secret configuration supported by the existing stack.
+
+If existing administrator authentication is already available, integrate with it instead of creating duplicate authentication mechanisms.
+
+Provide instructions for configuring the initial administrator account and secret in both development and deployment environments.
+
+A password screen without server-side route and data protection is not acceptable.
+
+# 3. UI DESIGN: MATCH THE PROVIDED REFERENCE IMAGE
+
+Use my uploaded reference image as the visual design source for the administrator interface.
+
+Create a minimal, premium, modern dashboard using the same cream-and-dark-green palette, subtle square grid background, large rounded rectangles, bold typography, and spacious layout.
+
+### Exact color palette
+
+- Colonial White: `#FFF0BA`
+- Green Waterloo: `#111808`
+- Page background: `#FAFAF7`
+- Primary text: `#111808`
+- Secondary text: `#656858`
+- Subtle border color: warm grey.
+- Highlight text on dark backgrounds: `#FFF0BA`.
+
+### Visual styling
+
+- Use a subtle CSS square-grid background.
+- Use large rounded cards with approximately 24–32px corner radii.
+- Use Colonial White for highlighted metric cards and important surfaces.
+- Use Green Waterloo for the sidebar, primary buttons, dark panels, and important dashboard sections.
+- Use cream typography against dark-green backgrounds.
+- Use a modern, bold, readable sans-serif font.
+- Use restrained hover effects and smooth, subtle animations.
+- Use simple, consistent icons.
+- Create well-spaced layouts with clear visual hierarchy.
+- Make data tables readable and easy to scan.
+- Use accessible buttons, labels, and color contrast.
+- Support desktop, tablets, and mobile screens.
+
+Do not use excessive gradients, neon colors, random color combinations, or unrelated visual themes.
+
+All admin pages, tables, forms, charts, dialogs, badges, status indicators, and navigation elements must follow this visual system.
+
+The final UI should feel cohesive with the provided reference image rather than like a generic admin template.
+
+# 4. CREATE THE COMPLETE ADMIN PANEL
+
+Implement a protected administrator dashboard at `/admin/dashboard`.
+
+Create a responsive sidebar with these sections:
+
+1. Overview
+2. Participants
+3. Live Monitoring
+4. Activity Logs
+5. Submissions
+6. Leaderboard and Winners
+7. Competition Controls
+8. Reports and Export
+9. Settings
+10. Logout
+
+All routes must enforce authentication and administrator permissions.
+
+## 4.1 Overview dashboard
+
+Create summary cards showing:
+
+- Total registered participants.
+- Total unique participants who have logged in.
+- Currently online participants.
+- Participants actively competing.
+- Explicitly logged-out participants.
+- Disconnected participants.
+- Completed attempts.
+- Submitted attempts.
+- Automatically terminated attempts.
+- Disqualified participants.
+- Total accepted submissions.
+- Total points awarded.
+
+Display charts for:
+
+- Participant activity over time.
+- Challenge completion.
+- Score distribution.
+- Submission acceptance and rejection.
+- Difficulty-level participation.
+- Recorded rule violations.
+
+Every card, chart, and counter must use actual database records or authoritative live session information.
+
+Clicking a card should open the relevant filtered view.
+
+When no data exists, show zero or an appropriate empty state. Do not generate fake statistics to make the dashboard appear populated.
+
+## 4.2 Participant management
+
+Create a fully functional, searchable, sortable, and filterable participant table.
+
+Include the following columns:
+
+- Participant ID.
+- Participant name.
+- Email, visible only to authorized administrators.
+- Login status.
+- Connection status.
+- Competition status.
+- Current difficulty level.
+- Current challenge.
+- Attempt start time.
+- Time remaining.
+- Total score.
+- Easy-level score.
+- Intermediate-level score.
+- Hard-level score.
+- Accepted submission count.
+- Failed submission count.
+- Recorded violation count.
+- Last activity timestamp.
+- Last heartbeat timestamp.
+- Submission status.
+- Termination reason, if applicable.
+
+Use distinct status labels:
+
+- ONLINE
+- OFFLINE
+- LOGGED OUT
+- IN PROGRESS
+- SUBMITTED
+- COMPLETED
+- CONNECTION LOST
+- TERMINATED
+- DISQUALIFIED
+
+Do not confuse a disconnected session with an explicit logout.
+
+### Participant filters
+
+Allow the admin to filter participants by:
+
+- Online or offline.
+- Explicit logout or connection loss.
+- Active attempts.
+- Easy, Intermediate, or Hard level.
+- Completed attempts.
+- Submitted attempts.
+- Terminated attempts.
+- Disqualified participants.
+- Participants with recorded violations.
+
+Add search by participant name, participant ID, and authorized email.
+
+Support pagination, sorting, and refresh without losing the selected filters.
+
+### Participant profile
+
+Clicking a participant should open a detailed profile showing:
+
+- Account and session status.
+- Competition history.
+- Active and previous attempts.
+- Challenge completion history.
+- Total and per-level scores.
+- Accepted and rejected submissions.
+- Attempt start and end times.
+- Time remaining for an active attempt.
+- Browser-observed monitoring events.
+- Server-confirmed violations and terminations.
+- Final competition status.
+
+Provide a chronological event timeline.
+
+# 5. REAL-TIME ACTIVITY MONITORING
+
+Implement an event-based monitoring system integrated with the existing backend.
+
+Capture relevant events that occur within Tech Arena.
+
+Examples include:
+
+- Successful login.
+- Explicit logout.
+- Competition instructions viewed.
+- Competition attempt started.
+- Difficulty level selected.
+- Challenge opened.
+- Answer submitted.
+- Submission accepted.
+- Submission rejected.
+- Score awarded.
+- Hint used, if supported.
+- Browser tab became hidden.
+- Competition window lost focus.
+- Browser focus returned.
+- Fullscreen exited.
+- Timer expired.
+- Heartbeat became stale.
+- Network connection restored.
+- Attempt terminated.
+- Competition completed.
+
+Persist events in the database.
+
+Each applicable event should contain:
+
+- Unique event ID.
+- Participant ID.
+- Competition ID.
+- Attempt ID.
+- Event type.
+- Server-generated timestamp.
+- Relevant challenge ID.
+- Difficulty level.
+- Relevant status.
+- Event details.
+- Violation category, if applicable.
+- Termination reason, if applicable.
+- Whether the event has been received by the server.
+
+Create a realtime activity feed showing the most recent events first.
+
+Allow administrators to filter by participant, event type, competition, status, and date range.
+
+Use the project's existing realtime infrastructure when possible. Otherwise, implement an appropriate WebSocket connection or secure realtime subscription with a fallback suitable for the current stack.
+
+Do not create fake live updates or simulated events in the production dashboard.
+
+Monitor only activity relevant to administering the competition. Do not record passwords, unrelated keystrokes, private files, or activity in unrelated applications.
+
+# 6. ANTI-CHEAT SYSTEM AND AUTOMATIC ATTEMPT TERMINATION
+
+Integrate the administrator panel with the existing competition engine to enforce supported competition rules.
+
+Make strict-mode focus-loss enforcement and fullscreen enforcement configurable per competition.
+
+Before an attempt starts, display the competition rules, explain the monitoring policy, and require the participant to acknowledge the rules.
+
+## 6.1 Detect supported browser events
+
+Use appropriate browser APIs, including:
+
+- `document.visibilitychange`
+- `window.blur`
+- `window.focus`
+- `fullscreenchange`
+- `pagehide`, where appropriate.
+- A session heartbeat mechanism.
+
+Request fullscreen only following a user action and only when the competition requires it.
+
+When the page becomes hidden, the window loses focus, or fullscreen exits during an active attempt, apply the configured enforcement policy.
+
+## 6.2 Strict-mode behavior
+
+For a qualifying violation during an active attempt:
+
+1. Immediately lock the local challenge interface.
+2. Prevent new answers or submissions from being initiated.
+3. Record the observed event and timestamp.
+4. Send the event to the backend using a resilient delivery mechanism, such as `navigator.sendBeacon()` or an appropriate request with `keepalive`.
+5. Request authoritative termination from the server.
+6. Update the attempt status to `TERMINATED` on the backend.
+7. Stop the attempt timer according to authoritative server state.
+8. Reject every subsequent submission for the terminated attempt.
+9. Persist the termination reason, timestamp, and associated violation.
+10. Update the admin dashboard and event timeline.
+11. Display a clear termination message to the participant.
+
+Suggested event types:
+
+- `WINDOW_FOCUS_LOST`
+- `TAB_HIDDEN`
+- `FULLSCREEN_EXIT`
+- `CONNECTION_LOST`
+- `HEARTBEAT_EXPIRED`
+
+Record what was actually observed. For example, a focus-loss event must not be falsely recorded as proof that an incognito window was opened.
+
+## 6.3 Prevent duplicate termination
+
+A single browser action may trigger several events, such as blur, visibility change, and fullscreen change.
+
+Implement idempotent server-side termination:
+
+- Only an active attempt may be newly terminated.
+- Repeated termination requests must not create multiple terminations.
+- Repeated events must not create duplicate penalties or duplicate score changes.
+- Concurrent submissions and terminations must be resolved consistently.
+- A terminated attempt must remain terminated.
+
+## 6.4 Server-side enforcement
+
+Never trust the participant browser as the authority for scoring, timers, eligibility, or attempt status.
+
+The server must validate:
+
+- The participant identity.
+- The authenticated session.
+- The attempt ID.
+- Competition and attempt status.
+- Challenge and submission permissions.
+- Submission deadline.
+- Remaining attempts.
+- Any applicable enforcement policy.
+
+After server-confirmed termination:
+
+- Reject all additional submissions for that attempt.
+- Prevent the participant from restarting the same attempt by refreshing the page.
+- Reconcile reconnecting sessions with the stored server state.
+- Preserve previously accepted submissions.
+- Preserve the audit trail.
+
+If the browser loses connectivity before an event reaches the server, lock the local interface immediately, queue the locally observed event when possible, and reconcile on reconnection. Clearly distinguish a locally observed event from server-confirmed termination.
+
+## 6.5 Window and incognito limitations
+
+Implement realistic best-effort browser monitoring.
+
+If a participant opens another tab or window and this causes the competition tab to become hidden or lose focus, use the observable browser event to enforce the competition rules.
+
+However, normal browser JavaScript cannot reliably:
+
+- Enumerate every browser window.
+- Prove that an incognito or private window was opened.
+- Inspect unrelated applications.
+- Guarantee detection of every focus-switching technique.
+
+Do not use invasive fingerprinting, hidden surveillance software, or unsupported techniques to bypass these browser limitations.
+
+Do not falsely report private-window use as detected evidence.
+
+## 6.6 Heartbeat and connection status
+
+Implement a participant session heartbeat, for example every 10 seconds.
+
+Use a configurable stale-session threshold, such as 30 seconds.
+
+Display distinct statuses for:
+
+- Active and connected.
+- Offline or stale connection.
+- Explicitly logged out.
+- Attempt terminated.
+- Attempt completed.
+
+Handle temporary network failures separately from cheating violations.
+
+A network interruption alone is not proof of cheating. Use a configurable connection-loss policy and documented grace period.
+
+# 7. PRESERVE THE EASY, INTERMEDIATE, AND HARD LEVELS
+
+Maintain all existing competition functionality.
+
+The administrator must be able to manage:
+
+- Easy-level challenges.
+- Intermediate-level challenges.
+- Hard-level challenges.
+
+If the existing project is a debugging competition, preserve the current debugging workspace, error-injection logic, challenge evaluator, and answer format.
+
+Allow the administrator to configure:
+
+- Challenge title and description.
+- Difficulty level.
+- Programming language, when relevant.
+- Point value.
+- Time limit.
+- Attempt limit.
+- Test cases.
+- Submission rules.
+- Hint availability.
+- Challenge publication status.
+
+Keep answers and hidden test cases on the trusted backend.
+
+Do not remove functioning challenge content or rewrite the participant experience unnecessarily.
+
+# 8. SCORING ENGINE
+
+Connect the admin panel to the existing scoring engine or implement a secure server-authoritative scoring system if one is missing.
+
+Support:
+
+- Configurable points for accepted answers.
+- Easy, Intermediate, and Hard score breakdowns.
+- Optional partial credit, if supported by the competition rules.
+- Total score calculation.
+- Accepted and rejected submissions.
+- Duplicate submission prevention.
+- Server-generated submission timestamps.
+- Configurable penalties and eligibility rules.
+- Consistent tie-breaking.
+
+Never trust scores supplied by the browser.
+
+Do not award points twice for the same accepted submission.
+
+Do not apply duplicate penalties when multiple browser events represent the same violation.
+
+Unless the documented competition rules say otherwise, a terminated participant should retain previously earned points while the attempt status and leaderboard eligibility follow the published rules.
+
+Provide transparent controls for the leaderboard visibility of terminated and disqualified participants.
+
+# 9. LIVE LEADERBOARD AND WINNER SELECTION
+
+Create a complete leaderboard using actual validated submissions and scores.
+
+Display:
+
+- Rank.
+- Participant display name.
+- Total points.
+- Easy points.
+- Intermediate points.
+- Hard points.
+- Accepted challenges.
+- Completion time.
+- Competition status.
+
+### Ranking rules
+
+1. Sort by validated total points, highest first.
+2. Implement a consistent configurable tie-breaker.
+3. Use the server's trusted timestamps for relevant tie-breaking.
+4. Use a stable secondary identifier when necessary.
+5. Never rank participants using client-submitted scores.
+6. Update rankings when validated scores change.
+7. Distinguish provisional rankings from final results.
+8. Respect the documented policy for terminated and disqualified participants.
+9. Allow the administrator to freeze and publish final rankings.
+10. Allow export of the final leaderboard as CSV.
+
+Create a visually polished top-three winners section using the Colonial White and Green Waterloo design.
+
+Ensure that winner selection is transparent and based on reproducible rules.
+
+# 10. SUBMISSIONS MANAGEMENT
+
+Create a dedicated submissions page.
+
+Display:
+
+- Submission ID.
+- Participant.
+- Challenge.
+- Difficulty.
+- Submission timestamp.
+- Validation status.
+- Points awarded.
+- Attempt number.
+- Rejection reason, if applicable.
+- Relevant attempt status.
+
+Allow filtering by:
+
+- Accepted.
+- Rejected.
+- Pending.
+- Duplicate.
+- Terminated attempt.
+- Competition.
+- Participant.
+- Difficulty.
+
+Do not expose hidden answers, private test cases, or other sensitive evaluation details to participants.
+
+An admin must be able to inspect submission results and export appropriate reports.
+
+Any manual score correction must create an auditable record showing the administrator, reason, timestamp, and change.
+
+# 11. COMPETITION CONTROL PANEL
+
+Create a dedicated competition-management page.
+
+Include working controls to:
+
+- View current competition status.
+- Open or close registration.
+- Set start and end dates.
+- Configure all difficulty levels.
+- Configure timers and attempt limits.
+- Enable or disable fullscreen enforcement.
+- Enable or disable strict-mode focus-loss enforcement.
+- Configure heartbeat and connection-loss thresholds.
+- Start the competition.
+- Pause or resume the competition according to its rules.
+- End the competition.
+- Prevent new attempts from starting.
+- Terminate an individual participant's active attempt.
+- Record a documented disqualification.
+- Freeze final scores.
+- Publish the final leaderboard.
+
+Require confirmation before destructive or irreversible administrative actions.
+
+Record all administrative actions in an audit log containing:
+
+- Administrator ID.
+- Action.
+- Timestamp.
+- Affected participant or competition.
+- Reason, when applicable.
+- Relevant before-and-after values, when appropriate.
+
+Never silently alter historical competition records.
+
+# 12. REPORTS AND CSV EXPORT
+
+Create a reporting section for:
+
+- Registration statistics.
+- Login and session statistics.
+- Online and offline activity.
+- Competition participation.
+- Challenge completion.
+- Accepted and rejected submissions.
+- Difficulty-level performance.
+- Score distribution.
+- Violations and termination events.
+- Disqualified participants.
+- Final rankings and winners.
+
+Allow authorized administrators to export the currently filtered participant list, submission records, activity reports, and final leaderboard as CSV.
+
+Ensure that exports use real database records and the same validated calculations as the dashboard.
+
+Protect private participant information in exports according to administrator permissions.
+
+# 13. DATABASE DESIGN AND BACKEND INTEGRATION
+
+Inspect the existing database before introducing new structures.
+
+Reuse the existing database and backend wherever feasible.
+
+Implement or extend the equivalent of these entities or collections:
+
+- `users`
+- `admin_profiles`
+- `competitions`
+- `challenges`
+- `competition_attempts`
+- `participant_sessions`
+- `session_heartbeats`
+- `submissions`
+- `score_records`
+- `activity_events`
+- `violations`
+- `leaderboard_snapshots`
+- `admin_audit_logs`
+
+Use suitable unique identifiers, relationships, indexes, and timestamps.
+
+Provide efficient queries for participant counts, live sessions, event history, scores, submissions, and leaderboard calculations.
+
+If Firebase is already integrated and appropriate, use Firebase Authentication, Firestore, and secure Cloud Functions or an equivalent trusted backend architecture.
+
+Otherwise, use the project's existing backend and database technologies.
+
+Requirements:
+
+- Enforce administrator authorization on all protected APIs.
+- Deny access by default.
+- Validate participant permissions on every operation.
+- Restrict participants to their own private records.
+- Keep administrator data and realtime subscriptions protected.
+- Apply appropriate validation, query constraints, and rate limiting.
+- Use authoritative server timestamps.
+- Keep secrets outside publicly accessible frontend code.
+- Prevent clients from changing scores, roles, deadlines, and authoritative attempt states.
+- Provide a safe `.env.example` or equivalent configuration template without real production secrets.
+- Document any genuinely required external service configuration.
+
+Preserve the existing application schema and data structures unless a necessary migration has been implemented safely.
+
+# 14. REMOVE ALL EXISTING SEED DATA, DUMMY RECORDS, AND MOCK STATISTICS
+
+This is a mandatory requirement.
+
+Inspect the whole project for seed data, mock records, sample accounts, hardcoded counters, dummy dashboards, placeholder statistics, and automatic demo-data generation.
+
+### 14.1 Remove unwanted seed data
+
+Identify and remove:
+
+- Fake participant accounts.
+- Demo login sessions.
+- Seeded online and offline statuses.
+- Fake active competition attempts.
+- Dummy Easy, Intermediate, and Hard challenges created only for demonstration.
+- Fake submissions.
+- Sample scores and points.
+- Dummy leaderboard rankings.
+- Fake rule-violation events.
+- Fake termination records.
+- Hardcoded dashboard counters.
+- Placeholder chart datasets.
+- Mock participant arrays.
+- Mock API responses used by production pages.
+- Unwanted JSON sample records.
+- Unnecessary database seed scripts.
+- Automatic startup processes that recreate dummy records.
+- Development demo data accidentally displayed as live competition data.
+
+Search the entire frontend and backend, database initialization files, seed scripts, migration files, configuration, and deployment setup.
+
+### 14.2 Clean the database safely
+
+Remove identified seed and demo records from the existing database without destroying the working application.
+
+Before deletion:
+
+1. Inspect the source and provenance of records.
+2. Back up persistent data when necessary.
+3. Clearly distinguish generated demo data from genuine participant records.
+
+Delete identifiable seed data and its associated demo-only references where appropriate.
+
+**Do not wipe the entire database indiscriminately.**
+
+Preserve:
+
+- Genuine registered participant accounts.
+- Genuine competition submissions.
+- Genuine scores and historical records.
+- The required database schema and indexes.
+- Secure administrator authentication.
+- Required application configuration.
+- Actual competition records that are still needed.
+
+If a record cannot reliably be identified as seed data, do not delete it merely because it resembles a test record. Inspect its provenance and handle it conservatively.
+
+Preserve or provision the authorized administrator account and its protected initial credential.
+
+### 14.3 Remove hardcoded frontend values
+
+Every dashboard statistic, participant table, activity feed, score chart, submission list, and leaderboard must use real backend data.
+
+Do not use hardcoded values such as:
+
+- Fixed online participant counts.
+- Fake total registrations.
+- Fabricated scores.
+- Random chart values.
+- Predefined leaderboard winners.
+- Hardcoded activity records.
+
+After removing the seed data, display zero when a metric has no records and show appropriate empty states when lists are empty.
+
+Display loading indicators while data is being retrieved and meaningful errors when the backend is unavailable.
+
+Do not make a missing API response appear to be a successful empty database result.
+
+### 14.4 Prevent future seed-data reinsertion
+
+- Remove unwanted automatic production seeding.
+- Separate test fixtures from production data.
+- Ensure the production application never automatically recreates demo participants or scores.
+- Keep optional seed generation restricted to explicit development or testing commands.
+- Ensure automated tests do not write demo records into the production database.
+- Do not insert sample records during normal application startup.
+- Verify that deleted records do not reappear after refreshing or restarting the application.
+
+### 14.5 Verify the cleanup
+
+After the cleanup:
+
+1. Search the project again for unwanted seed generators and hardcoded mock statistics.
+2. Confirm the participant count matches actual stored participant records.
+3. Confirm login statistics reflect real session history.
+4. Confirm online counts use valid active sessions or heartbeats.
+5. Confirm submissions and scores reflect actual accepted or rejected submissions.
+6. Confirm the leaderboard contains only records supported by the scoring system.
+7. Confirm activity logs contain actual events.
+8. Confirm the administrator login continues to work.
+9. Confirm all routes, database rules, and competition features still function.
+10. Report the files and scripts changed, records removed, records preserved, and any remaining cleanup limitations.
+
+**The live Tech Arena application must start without unwanted seed data, demo participants, mock statistics, or fabricated leaderboard results.**
+
+# 15. PRIVACY, SECURITY, AND DATA INTEGRITY
+
+Implement appropriate security throughout the application.
+
+- Authenticate all administrators.
+- Enforce authorization on the server, not only through UI visibility.
+- Use secure session handling and appropriate cookie settings.
+- Protect administrative API routes.
+- Protect realtime subscriptions.
+- Validate all inputs on the frontend and backend.
+- Prevent privilege escalation.
+- Prevent unauthorized data access.
+- Rate-limit sensitive endpoints.
+- Protect against repeated submission requests and duplicate scoring.
+- Keep hidden challenge solutions and test cases on the server.
+- Protect participant emails and private activity records.
+- Define a reasonable retention policy for monitoring events.
+- Provide a clear competition monitoring notice.
+- Do not collect unrelated private information.
+- Keep an auditable history of administrative interventions and score corrections.
+
+# 16. EDGE CASES AND ERROR HANDLING
+
+Implement and test these scenarios:
+
+- Incorrect administrator password.
+- Unauthorized attempt to open the admin route.
+- Direct access to protected APIs without a session.
+- Session expiry while the dashboard is open.
+- Participant explicitly logs out.
+- Participant closes their browser without logging out.
+- Participant refreshes the challenge page.
+- Participant switches to another tab.
+- Participant switches to another window.
+- Participant exits fullscreen.
+- Participant opens another browser window.
+- Participant uses a private browsing window.
+- Browser loses internet connectivity.
+- Heartbeat expires.
+- Participant reconnects after termination.
+- Timer expires during submission.
+- Duplicate submissions arrive.
+- Two submissions arrive concurrently.
+- Admin terminates an attempt during submission.
+- Participant tries to submit after termination.
+- Two participants finish with identical scores.
+- No registered participants exist.
+- No submissions exist.
+- Backend services are unavailable.
+- Dashboard data contains no records after seed cleanup.
+- A database migration fails.
+- An unauthorized user attempts to modify scores.
+
+For events browser APIs cannot reliably observe, document the limitations honestly. Never fabricate monitoring evidence.
+
+Provide meaningful error messages, safe fallbacks, and appropriate retry behavior.
+
+# 17. TESTING AND VALIDATION
+
+Create or update unit, integration, and end-to-end tests where appropriate.
+
+At minimum verify:
+
+1. Administrator authentication.
+2. Incorrect password rejection.
+3. Server-side protection of every admin route.
+4. Unauthorized API and database access rejection.
+5. Session expiry and logout.
+6. Correct participant counts.
+7. Accurate online, offline, disconnected, and explicit logout states.
+8. Persistent activity event logging.
+9. Focus-loss detection.
+10. Hidden-tab detection.
+11. Fullscreen-exit enforcement.
+12. Idempotent server-side attempt termination.
+13. Rejection of post-termination submissions.
+14. Duplicate submission prevention.
+15. Score calculation accuracy.
+16. Leaderboard ranking and tie-breaking.
+17. Competition start, pause, and end operations.
+18. Administrator audit logs.
+19. CSV exports.
+20. Connection-loss and reconnection behavior.
+21. Removal of unwanted seed records.
+22. Prevention of seed-data recreation.
+23. Correct empty states on a clean database.
+24. Preservation of genuine participant records.
+25. Preservation of the existing participant-facing application.
+
+Run the available build, lint, type checks, and automated tests.
+
+Fix errors caused by the implementation and report the actual test results. Do not claim that tests passed unless they were executed successfully.
+
+# 18. REQUIRED IMPLEMENTATION WORKFLOW
+
+Perform the work in this order.
+
+### Step 1: Inspect the codebase
+
+Understand the current application structure, features, backend, database, and competition flow.
+
+### Step 2: Identify seed data
+
+Locate all unwanted demo accounts, dummy records, mock counters, placeholder chart values, automatic seed scripts, and hardcoded statistics.
+
+### Step 3: Clean seed data safely
+
+Back up affected persistent data when needed, remove identifiable demo records, disable unwanted production seeding, and preserve genuine records and application structures.
+
+### Step 4: Implement secure admin authentication
+
+Create the initial administrator access using the supplied password configuration and protect all admin routes and operations.
+
+### Step 5: Build the visual interface
+
+Apply the Colonial White `#FFF0BA` and Green Waterloo `#111808` design throughout the administrator panel.
+
+### Step 6: Implement real functionality
+
+Integrate participant management, live monitoring, activity logs, automatic termination, scoring, submissions, competition controls, and leaderboard functionality with the existing backend.
+
+### Step 7: Verify data integrity
+
+Confirm there are no unwanted mock statistics, fake leaderboard results, or automatically recreated seed records in the production application.
+
+### Step 8: Test the complete implementation
+
+Run the available tests and fix issues introduced by the changes.
+
+### Step 9: Provide the completion report
+
+Summarize:
+
+- Implemented features.
+- Files created and modified.
+- Seed data and mock code removed.
+- Genuine data preserved.
+- Database or migration changes.
+- Administrator authentication setup.
+- Required environment variables.
+- How to run the application.
+- Tests actually executed and their results.
+- Browser-based monitoring limitations.
+- Any external service configuration still required.
+
+# FINAL ACCEPTANCE CRITERIA
+
+The task is complete only when all of the following are satisfied:
+
+- The existing Tech Arena website remains functional.
+- The administrator can authenticate using the configured initial password.
+- Admin routes, APIs, and database access are protected server-side.
+- The UI matches the provided cream-and-dark-green reference.
+- Easy, Intermediate, and Hard competition functionality is preserved.
+- The dashboard uses genuine backend statistics.
+- Participants and their sessions can be monitored.
+- Actual activity events are stored and displayed.
+- Supported browser focus and fullscreen events trigger the configured policies.
+- Authoritative server-side termination prevents further submissions for a terminated attempt.
+- Scores are calculated and validated on the server.
+- The live leaderboard correctly identifies winners.
+- Competition controls, monitoring filters, and CSV exports work.
+- Administrative actions are auditable.
+- Unwanted seed data and mock statistics are removed.
+- Genuine records are preserved.
+- Removed seed data is not automatically recreated.
+- Empty states work correctly when no real competition data exists.
+- Core functionality has been tested.
+- Any unsupported browser detection capability is documented honestly.
+
+**FINAL COMMAND: Inspect my existing Tech Arena project and directly implement the complete administrator system. Remove all unwanted seed data and mock content safely. Preserve the genuine application and participant records. Build a secure password-protected admin panel with the reference-inspired UI, real-time statistics, participant monitoring, anti-cheat enforcement, competition controls, submissions management, and an accurate live leaderboard. Do not return only a plan, mockup, or explanation. Make and verify the actual code changes supported by the current environment.**

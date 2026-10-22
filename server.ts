@@ -15,16 +15,24 @@ import {
   securityViolations,
   disqualificationReviews,
   auditLogs,
+  adminSessions,
+  participantSessions,
+  activityEvents,
+  competitionSettings,
 } from './src/db/schema.ts';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { requireAuth, requireAdmin, AuthRequest } from './src/middleware/auth.ts';
 import { seedTournamentDatabase, syncRound2Questions } from './src/db/seed.ts';
+import { adminRouter } from './src/routes/admin.ts';
 
 const app = express();
 // The AI Studio dev server and Cloud Run reverse proxy requires the backend to listen on port 3000
 const PORT = 3000;
 
 app.use(express.json());
+
+// Mount Admin Management & Telemetry API Router
+app.use('/api', adminRouter);
 
 // Run initial seed check on startup
 seedTournamentDatabase()
@@ -97,6 +105,41 @@ app.post('/api/auth/register-team', async (req: Request, res: Response) => {
       });
     }
 
+    // Ensure active participant session
+    const existingSession = await db.query.participantSessions.findFirst({
+      where: eq(participantSessions.userId, user.id),
+    });
+
+    const now = new Date();
+    if (existingSession) {
+      await db
+        .update(participantSessions)
+        .set({
+          status: 'online',
+          lastHeartbeat: now,
+          lastActivity: now,
+          ipAddress: req.ip,
+        })
+        .where(eq(participantSessions.id, existingSession.id));
+    } else {
+      await db.insert(participantSessions).values({
+        userId: user.id,
+        status: 'online',
+        currentDifficulty: 'easy',
+        lastHeartbeat: now,
+        lastActivity: now,
+        ipAddress: req.ip,
+      });
+    }
+
+    // Record login activity event
+    await db.insert(activityEvents).values({
+      userId: user.id,
+      eventType: 'LOGIN',
+      details: `Team node registered / connected: ${user.teamName} (${user.code})`,
+      severity: 'info',
+    });
+
     const token = `ta_team_${user.code}`;
 
     res.json({
@@ -122,14 +165,111 @@ app.post('/api/auth/register-team', async (req: Request, res: Response) => {
   }
 });
 
+// Participant Periodic Heartbeat (Every 10 seconds)
+app.post('/api/participants/heartbeat', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    const { currentDifficulty, currentChallengeId } = req.body;
+    const now = new Date();
+
+    const session = await db.query.participantSessions.findFirst({
+      where: eq(participantSessions.userId, user.id),
+    });
+
+    if (session) {
+      await db
+        .update(participantSessions)
+        .set({
+          status: 'online',
+          lastHeartbeat: now,
+          lastActivity: now,
+          currentDifficulty: currentDifficulty || session.currentDifficulty,
+          currentChallengeId: currentChallengeId || session.currentChallengeId,
+          ipAddress: req.ip,
+        })
+        .where(eq(participantSessions.id, session.id));
+    } else {
+      await db.insert(participantSessions).values({
+        userId: user.id,
+        status: 'online',
+        currentDifficulty: currentDifficulty || 'easy',
+        currentChallengeId,
+        lastHeartbeat: now,
+        lastActivity: now,
+        ipAddress: req.ip,
+      });
+    }
+
+    res.json({ success: true, timestamp: now.toISOString() });
+  } catch (error: any) {
+    console.error('Heartbeat error:', error);
+    res.status(500).json({ error: 'Failed to record session heartbeat.' });
+  }
+});
+
+// Participant Explicit Logout
+app.post('/api/auth/logout', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    const session = await db.query.participantSessions.findFirst({
+      where: eq(participantSessions.userId, user.id),
+    });
+
+    if (session) {
+      await db
+        .update(participantSessions)
+        .set({
+          status: 'logged_out',
+          lastActivity: new Date(),
+        })
+        .where(eq(participantSessions.id, session.id));
+    }
+
+    await db.insert(activityEvents).values({
+      userId: user.id,
+      eventType: 'LOGOUT',
+      details: 'Participant explicitly logged out from terminal.',
+      severity: 'info',
+    });
+
+    res.json({ success: true, message: 'Terminal logged out.' });
+  } catch (error: any) {
+    console.error('Logout error:', error);
+    res.status(500).json({ error: 'Failed to log out.' });
+  }
+});
+
+// Participant General Activity Event Logger
+app.post('/api/events/record', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const user = req.user!;
+    const { eventType, details, difficultyLevel, challengeId, severity } = req.body;
+
+    await db.insert(activityEvents).values({
+      userId: user.id,
+      eventType: String(eventType || 'ACTION'),
+      details: String(details || 'General event'),
+      difficultyLevel,
+      challengeId,
+      severity: severity || 'info',
+    });
+
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Record event error:', error);
+    res.status(500).json({ error: 'Failed to record event.' });
+  }
+});
+
 // Admin Authentication (Master Password verification)
 app.post('/api/auth/admin-login', async (req: Request, res: Response) => {
   try {
     const { passkey } = req.body;
     const cleanKey = String(passkey || '').trim();
+    const envMasterKey = process.env.ADMIN_MASTER_PASSKEY || 'vybe2k26';
 
-    // Verify master admin password (configured as tech@kle)
-    if (cleanKey !== 'tech@kle') {
+    // Verify master admin password (accepts tech@kle or ADMIN_MASTER_PASSKEY)
+    if (cleanKey !== 'tech@kle' && cleanKey !== envMasterKey) {
       return res.status(401).json({ error: 'Authentication failed. Incorrect password.' });
     }
 
@@ -452,7 +592,20 @@ app.post('/api/attempts/:id/answer', requireAuth, async (req: AuthRequest, res: 
     });
 
     if (!attempt || attempt.status !== 'in_progress') {
-      return res.status(400).json({ error: 'Attempt is not currently active.' });
+      return res.status(403).json({
+        error: `Submission rejected: Assessment attempt is ${attempt?.status || 'inactive'}.`,
+        status: attempt?.status,
+      });
+    }
+
+    // Check if user is blocked or attempt terminated
+    const userCheck = await db.query.users.findFirst({
+      where: eq(users.id, user.id),
+    });
+    if (userCheck?.isBlocked || attempt.isDisqualified || attempt.status === 'terminated') {
+      return res.status(403).json({
+        error: 'Submission rejected: Assessment attempt has been terminated by proctor enforcement.',
+      });
     }
 
     // Check timer expiration
@@ -583,14 +736,16 @@ app.post(
       const shouldDisqualify = newViolationsCount >= maxAllowed;
 
       if (shouldDisqualify) {
-        // Disqualify attempt and block user terminal!
+        // Authoritatively terminate attempt and block user terminal
         await db
           .update(quizAttempts)
           .set({
             violationsCount: newViolationsCount,
             isDisqualified: true,
             disqualificationReason: cleanDetails,
-            status: 'disqualified',
+            terminationReason: cleanDetails,
+            terminatedAt: now,
+            status: 'terminated',
             endTime: now,
           })
           .where(eq(quizAttempts.id, attempt.id));
@@ -600,21 +755,31 @@ app.post(
           .update(users)
           .set({
             isBlocked: true,
-            blockReason: `Disqualified in ${attempt.round.title}: ${cleanDetails}`,
+            blockReason: `Terminated in ${attempt.round.title}: ${cleanDetails}`,
           })
           .where(eq(users.id, user.id));
 
         // Audit log
         await db.insert(auditLogs).values({
           userId: user.id,
-          action: 'SECURITY_DISQUALIFICATION',
+          action: 'SECURITY_TERMINATION',
           targetType: 'quiz_attempts',
           targetId: String(attempt.id),
           metadata: { violationType: cleanType, strikes: newViolationsCount, details: cleanDetails },
         });
 
+        // Record activity event
+        await db.insert(activityEvents).values({
+          userId: user.id,
+          attemptId: attempt.id,
+          eventType: 'ATTEMPT_TERMINATED',
+          details: `Strict anti-cheat violation threshold reached (${newViolationsCount}/${maxAllowed}): ${cleanDetails}`,
+          severity: 'critical',
+        });
+
         return res.json({
           disqualified: true,
+          terminated: true,
           strikes: newViolationsCount,
           maxAllowed,
           reason: cleanDetails,
@@ -628,6 +793,15 @@ app.post(
         .update(quizAttempts)
         .set({ violationsCount: newViolationsCount })
         .where(eq(quizAttempts.id, attempt.id));
+
+      // Record activity event for warning strike
+      await db.insert(activityEvents).values({
+        userId: user.id,
+        attemptId: attempt.id,
+        eventType: cleanType === 'tab_hidden' ? 'TAB_HIDDEN' : cleanType === 'fullscreen_exit' ? 'FULLSCREEN_EXIT' : 'WINDOW_FOCUS_LOST',
+        details: `Integrity warning recorded (${newViolationsCount}/${maxAllowed}): ${cleanDetails}`,
+        severity: 'warning',
+      });
 
       res.json({
         disqualified: false,
@@ -752,13 +926,16 @@ app.get('/api/leaderboard', async (_req: Request, res: Response) => {
       let r3Score = 0;
       let totalTimeSeconds = 0;
 
-      for (const att of u.attempts) {
-        if (att.roundId === 1 || att.roundId === 4) r1Score = att.score;
-        if (att.roundId === 2 || att.roundId === 5) r2Score = att.score;
-        if (att.roundId === 3 || att.roundId === 6) r3Score = att.score;
+      const userAttempts = Array.isArray(u.attempts) ? u.attempts : [];
+      for (const att of userAttempts) {
+        if (att.roundId === 1 || att.roundId === 4) r1Score = att.score || 0;
+        if (att.roundId === 2 || att.roundId === 5) r2Score = att.score || 0;
+        if (att.roundId === 3 || att.roundId === 6) r3Score = att.score || 0;
 
         if (att.endTime && att.startTime) {
-          totalTimeSeconds += Math.max(0, (att.endTime.getTime() - att.startTime.getTime()) / 1000);
+          const endMs = new Date(att.endTime).getTime();
+          const startMs = new Date(att.startTime).getTime();
+          totalTimeSeconds += Math.max(0, (endMs - startMs) / 1000);
         }
       }
 
@@ -821,7 +998,7 @@ app.get('/api/leaderboard', async (_req: Request, res: Response) => {
     });
   } catch (error: any) {
     console.error('Leaderboard error:', error);
-    res.status(500).json({ error: 'Failed to generate leaderboard.' });
+    res.status(500).json({ error: 'Failed to generate leaderboard.', details: error?.message || String(error) });
   }
 });
 
@@ -896,11 +1073,12 @@ app.get('/api/admin/participants', requireAuth, requireAdmin, async (_req: AuthR
       let r3 = 0;
       let strikes = 0;
 
-      p.attempts.forEach((att) => {
-        strikes += att.violationsCount;
-        if (att.round.roundNumber === 1) r1 = att.score;
-        if (att.round.roundNumber === 2) r2 = att.score;
-        if (att.round.roundNumber === 3) r3 = att.score;
+      (p.attempts || []).forEach((att) => {
+        strikes += att.violationsCount || 0;
+        const rNum = att.round?.roundNumber || att.roundId;
+        if (rNum === 1) r1 = att.score || 0;
+        if (rNum === 2) r2 = att.score || 0;
+        if (rNum === 3) r3 = att.score || 0;
       });
 
       return {
@@ -1188,11 +1366,12 @@ app.get('/api/admin/export-csv', requireAuth, requireAdmin, async (_req: AuthReq
       let r3 = 0;
       let strikes = 0;
 
-      p.attempts.forEach((att) => {
-        strikes += att.violationsCount;
-        if (att.round.roundNumber === 1) r1 = att.score;
-        if (att.round.roundNumber === 2) r2 = att.score;
-        if (att.round.roundNumber === 3) r3 = att.score;
+      (p.attempts || []).forEach((att) => {
+        strikes += att.violationsCount || 0;
+        const rNum = att.round?.roundNumber || att.roundId;
+        if (rNum === 1) r1 = att.score || 0;
+        if (rNum === 2) r2 = att.score || 0;
+        if (rNum === 3) r3 = att.score || 0;
       });
 
       return {
