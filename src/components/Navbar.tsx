@@ -33,8 +33,12 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="max-w-7xl mx-auto flex items-center justify-between gap-6">
         {/* Zone 1: Brand Wordmark */}
         <div className="flex items-center gap-3 shrink-0">
-          <div className="h-10 w-10 rounded-xl bg-[#111808] text-[#FFF0BA] flex items-center justify-center border border-[#111808] shadow-sm">
-            <Cpu className="w-5 h-5 stroke-[2.2]" />
+          <div className="h-10 w-10 rounded-xl bg-white flex items-center justify-center border border-[#E5E0D8] p-1 shadow-sm overflow-hidden">
+            <img
+              src="/assets/aistudio/acd7f777-797e-4ce6-ae26-4077fe5fb474_aeab48d4.png"
+              alt="TECH ARENA Logo"
+              className="w-full h-full object-contain"
+            />
           </div>
           <div>
             <div className="flex items-center gap-2">

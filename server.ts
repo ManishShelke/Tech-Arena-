@@ -262,16 +262,45 @@ app.post('/api/events/record', requireAuth, async (req: AuthRequest, res: Respon
 });
 
 // Admin Authentication (Master Password verification)
+// In-memory rate limiting map for admin login protection
+const adminLoginAttempts = new Map<string, { count: number; lockedUntil: number }>();
+
 app.post('/api/auth/admin-login', async (req: Request, res: Response) => {
   try {
-    const { passkey } = req.body;
-    const cleanKey = String(passkey || '').trim();
+    const ip = req.ip || '127.0.0.1';
+    const now = Date.now();
+    const attemptRecord = adminLoginAttempts.get(ip);
+
+    if (attemptRecord && attemptRecord.lockedUntil > now) {
+      const waitSeconds = Math.ceil((attemptRecord.lockedUntil - now) / 1000);
+      return res.status(429).json({
+        error: `Too many failed login attempts. Account temporarily locked for security.`,
+        waitSeconds,
+      });
+    }
+
+    const { passkey, password } = req.body;
+    const cleanKey = String(password || passkey || '').trim();
     const envMasterKey = process.env.ADMIN_MASTER_PASSKEY || 'vybe2k26';
 
-    // Verify master admin password (accepts tech@kle or ADMIN_MASTER_PASSKEY)
+    // Verify master admin password on server side
     if (cleanKey !== 'tech@kle' && cleanKey !== envMasterKey) {
-      return res.status(401).json({ error: 'Authentication failed. Incorrect password.' });
+      const prev = adminLoginAttempts.get(ip) || { count: 0, lockedUntil: 0 };
+      const newCount = prev.count + 1;
+      if (newCount >= 5) {
+        adminLoginAttempts.set(ip, { count: 0, lockedUntil: now + 120 * 1000 });
+        return res.status(429).json({
+          error: 'Maximum login attempts exceeded. Suspended for 2 minutes.',
+          waitSeconds: 120,
+        });
+      } else {
+        adminLoginAttempts.set(ip, { count: newCount, lockedUntil: 0 });
+      }
+      return res.status(401).json({ error: 'Authentication failed. Incorrect administrator credentials.' });
     }
+
+    // Reset attempts on successful login
+    adminLoginAttempts.delete(ip);
 
     let adminUser = await db.query.users.findFirst({
       where: eq(users.role, 'admin'),
@@ -333,6 +362,17 @@ app.post('/api/auth/admin-login', async (req: Request, res: Response) => {
 // ==========================================
 
 // Get Current User Profile & Round Progression Status
+// Helper to shuffle array elements (Fisher-Yates)
+function shuffleArray<T>(array: T[]): T[] {
+  const arr = [...array];
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+// Get Current User Profile & Round Progression Status with Sequential Qualification
 app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const user = req.user!;
@@ -350,6 +390,16 @@ app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => 
       with: {
         round: true,
       },
+      orderBy: (quizAttempts, { desc }) => [desc(quizAttempts.id)],
+    });
+
+    const allRounds = await db.query.rounds.findMany({
+      orderBy: (rounds, { asc }) => [asc(rounds.roundNumber)],
+    });
+
+    const roundMap: Record<number, any> = {};
+    allRounds.forEach((r) => {
+      roundMap[r.roundNumber] = r;
     });
 
     let r1Score = 0;
@@ -358,21 +408,38 @@ app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => 
     let r1Completed = false;
     let r2Completed = false;
     let r3Completed = false;
+    let isQualifiedR1 = false;
+    let isQualifiedR2 = false;
+    let isQualifiedR3 = false;
     let violations = 0;
 
+    const r1Min = roundMap[1] ? Math.ceil((roundMap[1].maxScore || 8) * ((roundMap[1].qualifyingPercentage || 60) / 100)) : 5;
+    const r2Min = roundMap[2] ? Math.ceil((roundMap[2].maxScore || 20) * ((roundMap[2].qualifyingPercentage || 60) / 100)) : 12;
+    const r3Min = roundMap[3] ? Math.ceil((roundMap[3].maxScore || 30) * ((roundMap[3].qualifyingPercentage || 60) / 100)) : 18;
+
     for (const att of attempts) {
-      violations += att.violationsCount;
-      if (att.round.roundNumber === 1) {
+      violations += att.violationsCount || 0;
+      if (att.round?.roundNumber === 1 && !r1Completed) {
         r1Score = att.score;
         r1Completed = att.status === 'submitted' || att.status === 'timed_out';
-      } else if (att.round.roundNumber === 2) {
+        isQualifiedR1 = att.isQualified || att.score >= r1Min;
+      } else if (att.round?.roundNumber === 2 && !r2Completed) {
         r2Score = att.score;
         r2Completed = att.status === 'submitted' || att.status === 'timed_out';
-      } else if (att.round.roundNumber === 3) {
+        isQualifiedR2 = att.isQualified || att.score >= r2Min;
+      } else if (att.round?.roundNumber === 3 && !r3Completed) {
         r3Score = att.score;
         r3Completed = att.status === 'submitted' || att.status === 'timed_out';
+        isQualifiedR3 = att.isQualified || att.score >= r3Min;
       }
     }
+
+    const roundOverrides = (dbUser.roundOverrides || {}) as Record<string, boolean>;
+    const retakesAllowed = (dbUser.retakesAllowed || {}) as Record<string, boolean>;
+
+    const canAccessR1 = !dbUser.isBlocked && !dbUser.isRemoved;
+    const canAccessR2 = canAccessR1 && Boolean(roundOverrides['2'] || (r1Completed && isQualifiedR1));
+    const canAccessR3 = canAccessR1 && Boolean(roundOverrides['3'] || (r2Completed && isQualifiedR2));
 
     res.json({
       user: {
@@ -383,6 +450,17 @@ app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => 
         r1Completed,
         r2Completed,
         r3Completed,
+        isQualifiedR1,
+        isQualifiedR2,
+        isQualifiedR3,
+        canAccessR1,
+        canAccessR2,
+        canAccessR3,
+        r1MinScore: r1Min,
+        r2MinScore: r2Min,
+        r3MinScore: r3Min,
+        roundOverrides,
+        retakesAllowed,
         violations,
         maxViolations: 2,
       },
@@ -393,7 +471,7 @@ app.get('/api/auth/me', requireAuth, async (req: AuthRequest, res: Response) => 
   }
 });
 
-// Get Competition Rounds
+// Get Competition Rounds with Durations and Qualifying Percentages
 app.get('/api/rounds', async (_req: Request, res: Response) => {
   try {
     const allRounds = await db.query.rounds.findMany({
@@ -407,7 +485,7 @@ app.get('/api/rounds', async (_req: Request, res: Response) => {
   }
 });
 
-// Start a Quiz Attempt (Enforces server countdown timer & anti-cheat lockout)
+// Start a Quiz Attempt (Enforces Sequential Qualification, Random Shuffling & Authoritative Timer)
 app.post('/api/attempts/start', requireAuth, async (req: AuthRequest, res: Response) => {
   try {
     const user = req.user!;
@@ -418,10 +496,17 @@ app.post('/api/attempts/start', requireAuth, async (req: AuthRequest, res: Respo
       return res.status(400).json({ error: 'Invalid round number.' });
     }
 
-    // Check if participant is blocked
+    // Check if participant is blocked or removed
     const dbUser = await db.query.users.findFirst({
       where: eq(users.id, user.id),
     });
+
+    if (dbUser?.isRemoved) {
+      return res.status(403).json({
+        error: 'Terminal access revoked: Participant has been removed from the tournament roster by an administrator.',
+        isRemoved: true,
+      });
+    }
 
     if (dbUser?.isBlocked) {
       return res.status(403).json({
@@ -430,7 +515,7 @@ app.post('/api/attempts/start', requireAuth, async (req: AuthRequest, res: Respo
       });
     }
 
-    // Get round
+    // Get target round
     const round = await db.query.rounds.findFirst({
       where: eq(rounds.roundNumber, rNum),
     });
@@ -439,20 +524,96 @@ app.post('/api/attempts/start', requireAuth, async (req: AuthRequest, res: Respo
       return res.status(400).json({ error: 'Round is currently closed.' });
     }
 
-    // Check for existing attempt
+    // ==========================================
+    // SEQUENTIAL QUALIFICATION ENFORCEMENT
+    // ==========================================
+    const roundOverrides = (dbUser?.roundOverrides || {}) as Record<string, boolean>;
+
+    if (rNum === 2 && !roundOverrides['2']) {
+      const r1 = await db.query.rounds.findFirst({ where: eq(rounds.roundNumber, 1) });
+      const r1MinScore = r1 ? Math.ceil((r1.maxScore || 8) * ((r1.qualifyingPercentage || 60) / 100)) : 5;
+      const r1Attempt = await db.query.quizAttempts.findFirst({
+        where: and(eq(quizAttempts.userId, user.id), eq(quizAttempts.roundId, r1?.id || 1)),
+        orderBy: (quizAttempts, { desc }) => [desc(quizAttempts.id)],
+      });
+
+      const isR1Done = r1Attempt && (r1Attempt.status === 'submitted' || r1Attempt.status === 'timed_out');
+      const isR1Qualified = isR1Done && (r1Attempt.isQualified || r1Attempt.score >= r1MinScore);
+
+      if (!isR1Qualified) {
+        return res.status(403).json({
+          error: `Round 2 is locked. Qualification required: You must achieve at least ${r1?.qualifyingPercentage || 60}% (${r1MinScore} marks) in Round 1 to unlock Round 2.`,
+          locked: true,
+          requiredRound: 1,
+          qualifyingScore: r1MinScore,
+        });
+      }
+    } else if (rNum === 3 && !roundOverrides['3']) {
+      const r2 = await db.query.rounds.findFirst({ where: eq(rounds.roundNumber, 2) });
+      const r2MinScore = r2 ? Math.ceil((r2.maxScore || 20) * ((r2.qualifyingPercentage || 60) / 100)) : 12;
+      const r2Attempt = await db.query.quizAttempts.findFirst({
+        where: and(eq(quizAttempts.userId, user.id), eq(quizAttempts.roundId, r2?.id || 2)),
+        orderBy: (quizAttempts, { desc }) => [desc(quizAttempts.id)],
+      });
+
+      const isR2Done = r2Attempt && (r2Attempt.status === 'submitted' || r2Attempt.status === 'timed_out');
+      const isR2Qualified = isR2Done && (r2Attempt.isQualified || r2Attempt.score >= r2MinScore);
+
+      if (!isR2Qualified) {
+        return res.status(403).json({
+          error: `Round 3 is locked. Qualification required: You must achieve at least ${r2?.qualifyingPercentage || 60}% (${r2MinScore} marks) in Round 2 to unlock Round 3.`,
+          locked: true,
+          requiredRound: 2,
+          qualifyingScore: r2MinScore,
+        });
+      }
+    }
+
+    // Check for existing attempt (fetch latest attempt for this round)
     let attempt = await db.query.quizAttempts.findFirst({
       where: and(eq(quizAttempts.userId, user.id), eq(quizAttempts.roundId, round.id)),
+      orderBy: (quizAttempts, { desc }) => [desc(quizAttempts.id)],
     });
 
     const now = new Date();
 
-    if (!attempt) {
-      // Calculate server deadline: now + duration in minutes
+    // Check if attempt already submitted
+    if (attempt && (attempt.status === 'submitted' || attempt.status === 'timed_out' || attempt.status === 'completed')) {
+      const retakesAllowed = (dbUser?.retakesAllowed || {}) as Record<string, boolean>;
+      if (!retakesAllowed[String(rNum)]) {
+        return res.status(400).json({
+          error: `Round ${rNum} has already been completed and submitted. Multiple attempts require explicit administrator authorization.`,
+          alreadySubmitted: true,
+          score: attempt.score,
+        });
+      }
+      // Consume the retake authorization
+      delete retakesAllowed[String(rNum)];
+      await db.update(users).set({ retakesAllowed }).where(eq(users.id, user.id));
+      attempt = null; // Create fresh attempt below
+    }
+
+    // If attempt does not exist or was finalized as 'removed', create a fresh attempt with full timer & randomized question/option order
+    if (!attempt || attempt.status === 'removed') {
       const serverDeadline = new Date(now.getTime() + round.durationMinutes * 60 * 1000);
 
-      // Fetch question count
-      const qs = await db.query.questions.findMany({
-        where: eq(questions.roundId, round.id),
+      // Fetch all active questions for this round
+      const rawQs = await db.query.questions.findMany({
+        where: and(eq(questions.roundId, round.id), eq(questions.isActive, true)),
+        orderBy: (questions, { asc }) => [asc(questions.orderIndex), asc(questions.id)],
+      });
+
+      // Shuffle question presentation order
+      const shuffledQuestionsList = shuffleArray(rawQs);
+
+      // Map shuffled option ordering per question
+      const shuffledMapping = shuffledQuestionsList.map((q: any) => {
+        const originalOpts = (q.options || []) as string[];
+        const optionIndices = shuffleArray([0, 1, 2, 3].slice(0, originalOpts.length));
+        return {
+          questionId: q.id,
+          optionIndices,
+        };
       });
 
       const [newAttempt] = await db
@@ -464,15 +625,16 @@ app.post('/api/attempts/start', requireAuth, async (req: AuthRequest, res: Respo
           startTime: now,
           serverDeadline,
           score: 0,
-          totalQuestions: qs.length,
+          totalQuestions: rawQs.length,
           answersCount: 0,
           violationsCount: 0,
+          totalPausedSeconds: 0,
+          shuffledQuestions: shuffledMapping,
         })
         .returning();
 
       attempt = newAttempt;
 
-      // Log attempt start
       await db.insert(auditLogs).values({
         userId: user.id,
         action: 'START_ATTEMPT',
@@ -482,33 +644,64 @@ app.post('/api/attempts/start', requireAuth, async (req: AuthRequest, res: Respo
       });
     }
 
-    // Check if deadline has passed
-    const remainingMs = attempt.serverDeadline.getTime() - now.getTime();
-    if (remainingMs <= 0 && attempt.status === 'in_progress') {
-      await db
-        .update(quizAttempts)
-        .set({ status: 'timed_out', endTime: now })
-        .where(eq(quizAttempts.id, attempt.id));
-      attempt.status = 'timed_out';
+    // Calculate authoritative remaining time
+    let remainingMs = 0;
+    if (attempt.status === 'suspended_awaiting_approval') {
+      const pauseTime = attempt.pausedAt ? new Date(attempt.pausedAt).getTime() : now.getTime();
+      remainingMs = new Date(attempt.serverDeadline).getTime() - pauseTime;
+    } else if (attempt.status === 'in_progress' || attempt.status === 'resumed') {
+      remainingMs = new Date(attempt.serverDeadline).getTime() - now.getTime();
+      if (remainingMs <= 0) {
+        await db
+          .update(quizAttempts)
+          .set({ status: 'timed_out', endTime: now })
+          .where(eq(quizAttempts.id, attempt.id));
+        attempt.status = 'timed_out';
+      }
     }
 
-    // Fetch questions WITHOUT exposing correctOption to participant!
-    const roundQuestions = await db.query.questions.findMany({
-      where: eq(questions.roundId, round.id),
-      orderBy: (questions, { asc }) => [asc(questions.orderIndex)],
+    // Reconstruct shuffled questions according to the attempt's persisted mapping
+    const rawQuestions = await db.query.questions.findMany({
+      where: and(eq(questions.roundId, round.id), eq(questions.isActive, true)),
     });
+    const questionMap = new Map<number, any>();
+    rawQuestions.forEach((q) => questionMap.set(q.id, q));
 
-    // Sanitized questions for client (correctOption is stripped)
-    const sanitizedQuestions = roundQuestions.map((q) => ({
-      id: q.id,
-      prompt: q.prompt,
-      type: q.type,
-      options: q.options,
-      codeStarter: q.codeStarter,
-      points: q.points,
-      orderIndex: q.orderIndex,
-      category: q.category,
-    }));
+    const mappingList = (attempt.shuffledQuestions || []) as Array<{ questionId: number; optionIndices: number[] }>;
+    let orderedQuestions: any[] = [];
+
+    if (mappingList && mappingList.length > 0) {
+      mappingList.forEach((m) => {
+        const q = questionMap.get(m.questionId);
+        if (q) {
+          const originalOpts = (q.options || []) as string[];
+          const shuffledOpts = m.optionIndices.map((idx) => originalOpts[idx]);
+          orderedQuestions.push({
+            id: q.id,
+            code: q.code,
+            prompt: q.prompt,
+            type: q.type,
+            options: shuffledOpts,
+            codeStarter: q.codeStarter,
+            points: q.points,
+            orderIndex: q.orderIndex,
+            category: q.category,
+          });
+        }
+      });
+    } else {
+      orderedQuestions = rawQuestions.map((q) => ({
+        id: q.id,
+        code: q.code,
+        prompt: q.prompt,
+        type: q.type,
+        options: q.options,
+        codeStarter: q.codeStarter,
+        points: q.points,
+        orderIndex: q.orderIndex,
+        category: q.category,
+      }));
+    }
 
     // Fetch previously saved answers for this attempt
     const savedAnswers = await db.query.participantAnswers.findMany({
@@ -529,9 +722,14 @@ app.post('/api/attempts/start', requireAuth, async (req: AuthRequest, res: Respo
       serverDeadline: attempt.serverDeadline,
       remainingSeconds: Math.max(0, Math.floor(remainingMs / 1000)),
       durationMinutes: round.durationMinutes,
+      qualifyingPercentage: round.qualifyingPercentage,
+      maxScore: round.maxScore,
       violationsCount: attempt.violationsCount,
       maxViolations: round.maxViolations,
-      questions: sanitizedQuestions,
+      isSuspended: attempt.status === 'suspended_awaiting_approval',
+      pausedAt: attempt.pausedAt,
+      resumedAt: attempt.resumedAt,
+      questions: orderedQuestions,
       savedAnswers: answersMap,
     });
   } catch (error: any) {
@@ -555,24 +753,34 @@ app.get('/api/attempts/:id/sync', requireAuth, async (req: AuthRequest, res: Res
     }
 
     const now = new Date();
-    const remainingMs = attempt.serverDeadline.getTime() - now.getTime();
+    let remainingMs = 0;
 
-    // Auto-timeout if server deadline has expired
-    if (remainingMs <= 0 && attempt.status === 'in_progress') {
-      await db
-        .update(quizAttempts)
-        .set({ status: 'timed_out', endTime: now })
-        .where(eq(quizAttempts.id, attempt.id));
-      attempt.status = 'timed_out';
+    if (attempt.status === 'suspended_awaiting_approval') {
+      // Freeze timer during suspension at pausedAt timestamp
+      const pauseTime = attempt.pausedAt ? new Date(attempt.pausedAt).getTime() : now.getTime();
+      remainingMs = new Date(attempt.serverDeadline).getTime() - pauseTime;
+    } else if (attempt.status === 'in_progress' || attempt.status === 'resumed') {
+      remainingMs = new Date(attempt.serverDeadline).getTime() - now.getTime();
+      // Auto-timeout if server deadline has expired
+      if (remainingMs <= 0) {
+        await db
+          .update(quizAttempts)
+          .set({ status: 'timed_out', endTime: now })
+          .where(eq(quizAttempts.id, attempt.id));
+        attempt.status = 'timed_out';
+      }
     }
 
     res.json({
       attemptId: attempt.id,
       status: attempt.status,
       remainingSeconds: Math.max(0, Math.floor(remainingMs / 1000)),
+      isSuspended: attempt.status === 'suspended_awaiting_approval',
       serverTime: now.toISOString(),
       violationsCount: attempt.violationsCount,
       isDisqualified: attempt.isDisqualified,
+      terminationReason: attempt.terminationReason,
+      disqualificationReason: attempt.disqualificationReason,
     });
   } catch (error: any) {
     console.error('Sync attempt error:', error);
@@ -591,17 +799,33 @@ app.post('/api/attempts/:id/answer', requireAuth, async (req: AuthRequest, res: 
       where: and(eq(quizAttempts.id, attemptId), eq(quizAttempts.userId, user.id)),
     });
 
-    if (!attempt || attempt.status !== 'in_progress') {
+    if (!attempt) {
+      return res.status(404).json({ error: 'Attempt not found.' });
+    }
+
+    if (attempt.status === 'suspended_awaiting_approval') {
       return res.status(403).json({
-        error: `Submission rejected: Assessment attempt is ${attempt?.status || 'inactive'}.`,
-        status: attempt?.status,
+        error: 'Submission rejected: Task is suspended awaiting Chief Proctor review and authorization.',
+        status: attempt.status,
       });
     }
 
-    // Check if user is blocked or attempt terminated
+    if (attempt.status !== 'in_progress' && attempt.status !== 'resumed') {
+      return res.status(403).json({
+        error: `Submission rejected: Assessment attempt is ${attempt.status}.`,
+        status: attempt.status,
+      });
+    }
+
+    // Check if user is blocked, removed, or attempt terminated
     const userCheck = await db.query.users.findFirst({
       where: eq(users.id, user.id),
     });
+    if (userCheck?.isRemoved) {
+      return res.status(403).json({
+        error: 'Submission rejected: Participant has been removed from competition.',
+      });
+    }
     if (userCheck?.isBlocked || attempt.isDisqualified || attempt.status === 'terminated') {
       return res.status(403).json({
         error: 'Submission rejected: Assessment attempt has been terminated by proctor enforcement.',
@@ -626,12 +850,20 @@ app.post('/api/attempts/:id/answer', requireAuth, async (req: AuthRequest, res: 
       return res.status(404).json({ error: 'Question not found.' });
     }
 
+    // Retrieve mapping for this question in attempt.shuffledQuestions
+    const shuffledList = (attempt.shuffledQuestions || []) as Array<{ questionId: number; optionIndices: number[] }>;
+    const qMapping = shuffledList.find((m) => m.questionId === question.id);
+    let originalSelectedOption = selectedOption;
+    if (qMapping && selectedOption !== undefined && qMapping.optionIndices && qMapping.optionIndices[selectedOption] !== undefined) {
+      originalSelectedOption = qMapping.optionIndices[selectedOption];
+    }
+
     // Evaluate answer on the server!
     let isCorrect = false;
     let pointsEarned = 0;
 
     if (question.type === 'mcq') {
-      isCorrect = selectedOption !== undefined && selectedOption === question.correctOption;
+      isCorrect = selectedOption !== undefined && originalSelectedOption === question.correctOption;
       pointsEarned = isCorrect ? question.points : 0;
     } else if (question.type === 'code') {
       // Basic automated code validator: checks that submitted code compiles and contains key algorithmic tokens
@@ -713,15 +945,30 @@ app.post(
         with: { round: true },
       });
 
-      if (!attempt || attempt.status !== 'in_progress') {
-        return res.status(400).json({ error: 'Attempt is not currently active.' });
+      if (!attempt) {
+        return res.status(404).json({ error: 'Attempt not found.' });
       }
 
-      const cleanType = violationType || 'tab_blur';
+      // If already suspended, return current suspension state without duplicating incidents
+      if (attempt.status === 'suspended_awaiting_approval') {
+        return res.json({
+          suspended: true,
+          status: 'suspended_awaiting_approval',
+          incidentCount: attempt.violationsCount,
+          message: 'Task is suspended awaiting Chief Proctor review and authorization.',
+        });
+      }
+
+      // Only active attempts (in_progress or resumed) can trigger a suspension
+      if (attempt.status !== 'in_progress' && attempt.status !== 'resumed') {
+        return res.status(400).json({ error: `Attempt is not currently active (${attempt.status}).` });
+      }
+
+      const cleanType = violationType || 'tab_switch';
       const cleanDetails = details || 'Tab switch / Window focus departure';
       const now = new Date();
 
-      // Record security violation event
+      // Record security violation incident with participant ID, task/round ID, timestamp, and details
       await db.insert(securityViolations).values({
         attemptId: attempt.id,
         userId: user.id,
@@ -731,83 +978,52 @@ app.post(
         serverTimestamp: now,
       });
 
-      const newViolationsCount = attempt.violationsCount + 1;
-      const maxAllowed = attempt.round.maxViolations;
-      const shouldDisqualify = newViolationsCount >= maxAllowed;
+      const newViolationsCount = (attempt.violationsCount || 0) + 1;
 
-      if (shouldDisqualify) {
-        // Authoritatively terminate attempt and block user terminal
-        await db
-          .update(quizAttempts)
-          .set({
-            violationsCount: newViolationsCount,
-            isDisqualified: true,
-            disqualificationReason: cleanDetails,
-            terminationReason: cleanDetails,
-            terminatedAt: now,
-            status: 'terminated',
-            endTime: now,
-          })
-          .where(eq(quizAttempts.id, attempt.id));
-
-        // Block user terminal across all questions
-        await db
-          .update(users)
-          .set({
-            isBlocked: true,
-            blockReason: `Terminated in ${attempt.round.title}: ${cleanDetails}`,
-          })
-          .where(eq(users.id, user.id));
-
-        // Audit log
-        await db.insert(auditLogs).values({
-          userId: user.id,
-          action: 'SECURITY_TERMINATION',
-          targetType: 'quiz_attempts',
-          targetId: String(attempt.id),
-          metadata: { violationType: cleanType, strikes: newViolationsCount, details: cleanDetails },
-        });
-
-        // Record activity event
-        await db.insert(activityEvents).values({
-          userId: user.id,
-          attemptId: attempt.id,
-          eventType: 'ATTEMPT_TERMINATED',
-          details: `Strict anti-cheat violation threshold reached (${newViolationsCount}/${maxAllowed}): ${cleanDetails}`,
-          severity: 'critical',
-        });
-
-        return res.json({
-          disqualified: true,
-          terminated: true,
-          strikes: newViolationsCount,
-          maxAllowed,
-          reason: cleanDetails,
-          message:
-            'Security violation threshold reached. Terminal ejected to dashboard and all questions locked.',
-        });
-      }
-
-      // Increment strikes
+      // Immediate suspension on the very first tab switch!
+      // Freeze the timer by setting pausedAt = now
       await db
         .update(quizAttempts)
-        .set({ violationsCount: newViolationsCount })
+        .set({
+          status: 'suspended_awaiting_approval',
+          pausedAt: now,
+          lastIncidentAt: now,
+          violationsCount: newViolationsCount,
+          disqualificationReason: cleanDetails,
+        })
         .where(eq(quizAttempts.id, attempt.id));
 
-      // Record activity event for warning strike
+      // Record activity event
       await db.insert(activityEvents).values({
         userId: user.id,
         attemptId: attempt.id,
-        eventType: cleanType === 'tab_hidden' ? 'TAB_HIDDEN' : cleanType === 'fullscreen_exit' ? 'FULLSCREEN_EXIT' : 'WINDOW_FOCUS_LOST',
-        details: `Integrity warning recorded (${newViolationsCount}/${maxAllowed}): ${cleanDetails}`,
-        severity: 'warning',
+        eventType: 'TAB_SWITCH_SUSPENSION',
+        details: `Tab/window switch incident #${newViolationsCount} detected: ${cleanDetails}. Assessment suspended awaiting proctor authorization.`,
+        severity: 'critical',
       });
 
-      res.json({
-        disqualified: false,
+      // Audit log
+      await db.insert(auditLogs).values({
+        userId: user.id,
+        action: 'TAB_SWITCH_SUSPENSION',
+        targetType: 'quiz_attempts',
+        targetId: String(attempt.id),
+        metadata: {
+          violationType: cleanType,
+          incidentCount: newViolationsCount,
+          details: cleanDetails,
+          pausedAt: now,
+        },
+      });
+
+      return res.json({
+        suspended: true,
+        status: 'suspended_awaiting_approval',
         strikes: newViolationsCount,
-        maxAllowed,
-        warning: `Integrity warning: ${newViolationsCount}/${maxAllowed} strikes. Do not switch tabs or exit fullscreen.`,
+        incidentCount: newViolationsCount,
+        pausedAt: now.toISOString(),
+        message:
+          'TASK SUSPENDED: Leaving the active task window violates tournament rules. Assessment has been suspended pending Chief Proctor authorization.',
       });
     } catch (error: any) {
       console.error('Security event error:', error);
@@ -831,11 +1047,36 @@ app.post('/api/attempts/:id/submit', requireAuth, async (req: AuthRequest, res: 
       return res.status(404).json({ error: 'Attempt not found.' });
     }
 
+    if (attempt.status === 'suspended_awaiting_approval') {
+      return res.status(403).json({
+        error: 'Submission rejected: Assessment is currently suspended awaiting Chief Proctor review.',
+      });
+    }
+
+    if (attempt.status === 'terminated' || attempt.status === 'removed' || attempt.status === 'disqualified') {
+      return res.status(403).json({
+        error: 'Submission rejected: Assessment attempt has been terminated.',
+      });
+    }
+
     const now = new Date();
+    // Calculate final score across all answered questions
+    const allAnswers = await db.query.participantAnswers.findMany({
+      where: eq(participantAnswers.attemptId, attempt.id),
+    });
+
+    const finalScore = allAnswers.reduce((sum, a) => sum + (a.isCorrect ? a.pointsEarned : 0), 0);
+    const maxScore = attempt.round.maxScore || (attempt.round.roundNumber === 1 ? 8 : attempt.round.roundNumber === 2 ? 20 : 30);
+    const qualPct = attempt.round.qualifyingPercentage || 60;
+    const qualifyingScore = Math.ceil(maxScore * (qualPct / 100));
+    const isQualified = finalScore >= qualifyingScore;
+
     await db
       .update(quizAttempts)
       .set({
         status: 'submitted',
+        score: finalScore,
+        isQualified,
         endTime: now,
       })
       .where(eq(quizAttempts.id, attempt.id));
@@ -846,18 +1087,94 @@ app.post('/api/attempts/:id/submit', requireAuth, async (req: AuthRequest, res: 
       action: 'SUBMIT_ATTEMPT',
       targetType: 'quiz_attempts',
       targetId: String(attempt.id),
-      metadata: { score: attempt.score, totalQuestions: attempt.totalQuestions },
+      metadata: { score: finalScore, maxScore, isQualified, roundNumber: attempt.round.roundNumber },
     });
 
     res.json({
       success: true,
-      score: attempt.score,
+      score: finalScore,
+      maxScore,
+      qualifyingScore,
+      qualifyingPercentage: qualPct,
+      isQualified,
       roundNumber: attempt.round.roundNumber,
-      message: `Round ${attempt.round.roundNumber} submitted successfully!`,
+      message: isQualified
+        ? `Round ${attempt.round.roundNumber} submitted! Congratulations, you qualified with ${finalScore}/${maxScore} marks.`
+        : `Round ${attempt.round.roundNumber} submitted. You scored ${finalScore}/${maxScore} marks (Required to qualify: ${qualifyingScore}).`,
     });
   } catch (error: any) {
     console.error('Submit attempt error:', error);
     res.status(500).json({ error: 'Failed to submit attempt.' });
+  }
+});
+
+// Review Attempt (Explanations and Answer Keys Revealed Only When Allowed)
+app.get('/api/attempts/:id/review', requireAuth, async (req: AuthRequest, res: Response) => {
+  try {
+    const attemptId = parseInt(req.params.id, 10);
+    const user = req.user!;
+
+    const attempt = await db.query.quizAttempts.findFirst({
+      where: and(eq(quizAttempts.id, attemptId), eq(quizAttempts.userId, user.id)),
+      with: { round: true },
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ error: 'Attempt not found.' });
+    }
+
+    if (attempt.status !== 'submitted' && attempt.status !== 'timed_out' && attempt.status !== 'completed') {
+      return res.status(400).json({ error: 'Detailed review is only available after attempt submission.' });
+    }
+
+    const settings = await db.query.competitionSettings.findFirst();
+    const canReview = settings?.competitionStatus === 'completed' || settings?.publishedFinal;
+
+    if (!canReview && user.role !== 'admin') {
+      return res.status(403).json({
+        error: 'Explanations and master answer keys remain concealed during the active competition and will be revealed once the tournament concludes.',
+        locked: true,
+      });
+    }
+
+    const roundQuestions = await db.query.questions.findMany({
+      where: eq(questions.roundId, attempt.roundId),
+      orderBy: (questions, { asc }) => [asc(questions.orderIndex)],
+    });
+
+    const userAnswers = await db.query.participantAnswers.findMany({
+      where: eq(participantAnswers.attemptId, attempt.id),
+    });
+
+    const answersMap: Record<number, any> = {};
+    userAnswers.forEach((a) => {
+      answersMap[a.questionId] = a;
+    });
+
+    const reviewQuestions = roundQuestions.map((q) => ({
+      id: q.id,
+      code: q.code,
+      prompt: q.prompt,
+      options: q.options,
+      correctOption: q.correctOption,
+      explanation: q.explanation,
+      points: q.points,
+      category: q.category,
+      userAnswer: answersMap[q.id]?.selectedOption,
+      isCorrect: answersMap[q.id]?.isCorrect || false,
+      pointsEarned: answersMap[q.id]?.pointsEarned || 0,
+    }));
+
+    res.json({
+      attemptId: attempt.id,
+      score: attempt.score,
+      maxScore: attempt.round.maxScore,
+      isQualified: attempt.isQualified,
+      questions: reviewQuestions,
+    });
+  } catch (error: any) {
+    console.error('Review attempt error:', error);
+    res.status(500).json({ error: 'Failed to load attempt review.' });
   }
 });
 

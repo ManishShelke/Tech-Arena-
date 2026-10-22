@@ -14,6 +14,11 @@ export const users = pgTable('users', {
   zone: text('zone').notNull().default('South Zone'),
   isBlocked: boolean('is_blocked').notNull().default(false),
   blockReason: text('block_reason'),
+  isRemoved: boolean('is_removed').notNull().default(false),
+  removedAt: timestamp('removed_at'),
+  removalReason: text('removal_reason'),
+  roundOverrides: jsonb('round_overrides').$type<Record<string, boolean>>(),
+  retakesAllowed: jsonb('retakes_allowed').$type<Record<string, boolean>>(),
   createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
@@ -52,10 +57,12 @@ export const events = pgTable('events', {
 export const rounds = pgTable('rounds', {
   id: serial('id').primaryKey(),
   roundNumber: integer('round_number').notNull().unique(),
-  difficulty: text('difficulty').notNull().default('easy'), // 'easy' | 'intermediate' | 'hard'
+  difficulty: text('difficulty').notNull().default('easy'), // 'easy' | 'medium' | 'hard'
   title: text('title').notNull(),
   description: text('description').notNull(),
-  durationMinutes: integer('duration_minutes').notNull().default(30),
+  durationMinutes: integer('duration_minutes').notNull().default(10),
+  qualifyingPercentage: integer('qualifying_percentage').notNull().default(60),
+  maxScore: integer('max_score').notNull().default(8),
   maxViolations: integer('max_violations').notNull().default(2),
   isOpen: boolean('is_open').notNull().default(true),
   isPublished: boolean('is_published').notNull().default(true),
@@ -65,14 +72,17 @@ export const rounds = pgTable('rounds', {
 export const questions = pgTable('questions', {
   id: serial('id').primaryKey(),
   roundId: integer('round_id').notNull().references(() => rounds.id),
+  code: text('code'), // e.g. 'E1', 'M5', 'H10'
   prompt: text('prompt').notNull(),
   type: text('type').notNull().default('mcq'), // 'mcq' | 'code'
   options: jsonb('options').$type<string[]>(),
-  correctOption: integer('correct_option'),
+  correctOption: integer('correct_option'), // 0, 1, 2, 3
+  explanation: text('explanation'),
   codeStarter: text('code_starter'),
-  points: integer('points').notNull().default(10),
+  points: integer('points').notNull().default(1),
   orderIndex: integer('order_index').notNull().default(1),
   category: text('category').notNull().default('General'),
+  isActive: boolean('is_active').notNull().default(true),
 });
 
 export const quizAttempts = pgTable('quiz_attempts', {
@@ -84,6 +94,9 @@ export const quizAttempts = pgTable('quiz_attempts', {
   serverDeadline: timestamp('server_deadline').notNull(),
   endTime: timestamp('end_time'),
   score: integer('score').notNull().default(0),
+  isQualified: boolean('is_qualified').notNull().default(false),
+  qualificationOverridden: boolean('qualification_overridden').notNull().default(false),
+  shuffledQuestions: jsonb('shuffled_questions'),
   totalQuestions: integer('total_questions').notNull().default(0),
   answersCount: integer('answers_count').notNull().default(0),
   violationsCount: integer('violations_count').notNull().default(0),
@@ -91,6 +104,13 @@ export const quizAttempts = pgTable('quiz_attempts', {
   disqualificationReason: text('disqualification_reason'),
   terminationReason: text('termination_reason'),
   terminatedAt: timestamp('terminated_at'),
+  pausedAt: timestamp('paused_at'),
+  totalPausedSeconds: integer('total_paused_seconds').notNull().default(0),
+  resumedAt: timestamp('resumed_at'),
+  adminDecision: text('admin_decision'),
+  adminDecisionAt: timestamp('admin_decision_at'),
+  adminDecisionNotes: text('admin_decision_notes'),
+  lastIncidentAt: timestamp('last_incident_at'),
 });
 
 export const participantAnswers = pgTable('participant_answers', {

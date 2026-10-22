@@ -32,6 +32,15 @@ import {
   UserCheck,
   Building2,
   FileSpreadsheet,
+  Play,
+  XCircle,
+  Trash2,
+  UserX,
+  BookOpen,
+  Plus,
+  Edit3,
+  HelpCircle,
+  CheckCircle2,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -51,6 +60,33 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
   const [rounds, setRounds] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Curriculum & Question Bank State
+  const [questionsList, setQuestionsList] = useState<any[]>([]);
+  const [loadingQuestions, setLoadingQuestions] = useState(false);
+  const [questionRoundFilter, setQuestionRoundFilter] = useState<number>(0);
+  const [questionSearch, setQuestionSearch] = useState<string>('');
+  const [questionModal, setQuestionModal] = useState<{
+    mode: 'create' | 'edit';
+    data: {
+      id?: number;
+      roundId: number;
+      code: string;
+      category: string;
+      points: number;
+      prompt: string;
+      option0: string;
+      option1: string;
+      option2: string;
+      option3: string;
+      correctOption: number;
+      explanation: string;
+      isActive: boolean;
+    };
+  } | null>(null);
+  const [savingQuestion, setSavingQuestion] = useState(false);
+  const [roundSettingsDraft, setRoundSettingsDraft] = useState<Record<number, { durationMinutes: number; qualifyingPercentage: number }>>({});
+  const [savingRoundId, setSavingRoundId] = useState<number | null>(null);
+
   // Filters & State
   const [participantSearch, setParticipantSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -68,6 +104,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
   const [correctionIsCorrect, setCorrectionIsCorrect] = useState<boolean>(true);
   const [correctionReason, setCorrectionReason] = useState<string>('');
   const [submittingCorrection, setSubmittingCorrection] = useState(false);
+
+  // Participant Management Controls Modal State
+  const [actionModal, setActionModal] = useState<{
+    type: 'approve_resume' | 'terminate' | 'remove' | 'readd' | 'delete';
+    participant: any;
+    reason: string;
+    notes: string;
+    loading: boolean;
+  } | null>(null);
+
+  // Tab Switch Incident Inspector Modal
+  const [incidentInspectionTarget, setIncidentInspectionTarget] = useState<any | null>(null);
+
+  // Administrative Action Toast Notification
+  const [feedbackToast, setFeedbackToast] = useState<{
+    type: 'success' | 'error';
+    message: string;
+  } | null>(null);
 
   // Fetch Admin Overview
   const fetchOverview = async () => {
@@ -165,6 +219,37 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
     }
   };
 
+  // Fetch Questions
+  const fetchQuestions = async () => {
+    setLoadingQuestions(true);
+    try {
+      const res = await fetch('/api/admin/questions', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        setQuestionsList(await res.json());
+      }
+    } catch (err) {
+      console.error('Error fetching questions:', err);
+    } finally {
+      setLoadingQuestions(false);
+    }
+  };
+
+  // Sync draft round settings when rounds are fetched
+  useEffect(() => {
+    if (rounds.length > 0) {
+      const draft: Record<number, { durationMinutes: number; qualifyingPercentage: number }> = {};
+      rounds.forEach((r) => {
+        draft[r.id] = {
+          durationMinutes: r.durationMinutes || (r.roundNumber === 1 ? 10 : r.roundNumber === 2 ? 20 : 30),
+          qualifyingPercentage: r.qualifyingPercentage || 60,
+        };
+      });
+      setRoundSettingsDraft(draft);
+    }
+  }, [rounds]);
+
   // Initial load
   const loadAllData = async () => {
     setLoading(true);
@@ -175,6 +260,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
       fetchActivityLogs(),
       fetchSubmissions(),
       fetchSettingsAndRounds(),
+      fetchQuestions(),
     ]);
     setLoading(false);
   };
@@ -207,26 +293,232 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
     }
   };
 
-  // Remote terminate participant attempt
-  const handleTerminateAttempt = async (id: number) => {
-    const reason = window.prompt('Specify termination reason (e.g. Proctored rule violation):');
-    if (!reason) return;
+  const showFeedback = (type: 'success' | 'error', message: string) => {
+    setFeedbackToast({ type, message });
+    setTimeout(() => setFeedbackToast(null), 4500);
+  };
 
+  // Question CRUD Handlers
+  const handleSaveQuestion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!questionModal) return;
+    setSavingQuestion(true);
     try {
-      const res = await fetch(`/api/admin/participants/${id}/terminate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ reason }),
+      const payload = {
+        roundId: Number(questionModal.data.roundId),
+        code: questionModal.data.code.trim(),
+        category: questionModal.data.category.trim(),
+        points: Number(questionModal.data.points),
+        prompt: questionModal.data.prompt.trim(),
+        options: [
+          questionModal.data.option0.trim(),
+          questionModal.data.option1.trim(),
+          questionModal.data.option2.trim(),
+          questionModal.data.option3.trim(),
+        ],
+        correctOption: Number(questionModal.data.correctOption),
+        explanation: questionModal.data.explanation.trim(),
+        isActive: questionModal.data.isActive,
+      };
+
+      let res: Response;
+      if (questionModal.mode === 'create') {
+        res = await fetch('/api/admin/questions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        res = await fetch(`/api/admin/questions/${questionModal.data.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      if (res.ok) {
+        showFeedback('success', questionModal.mode === 'create' ? 'Question added to bank.' : 'Question updated.');
+        setQuestionModal(null);
+        fetchQuestions();
+      } else {
+        const err = await res.json();
+        showFeedback('error', err.error || 'Failed to save question.');
+      }
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Error saving question.');
+    } finally {
+      setSavingQuestion(false);
+    }
+  };
+
+  const handleDeleteQuestion = async (id: number) => {
+    if (!window.confirm('Delete this question from the competition bank?')) return;
+    try {
+      const res = await fetch(`/api/admin/questions/${id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
       });
       if (res.ok) {
-        alert('Participant attempt terminated and questions locked.');
-        loadAllData();
+        showFeedback('success', 'Question deleted.');
+        fetchQuestions();
+      } else {
+        showFeedback('error', 'Failed to delete question.');
       }
     } catch (err) {
-      console.error('Failed to terminate attempt:', err);
+      showFeedback('error', 'Error deleting question.');
+    }
+  };
+
+  const handleToggleQuestionActive = async (q: any) => {
+    try {
+      const res = await fetch(`/api/admin/questions/${q.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ isActive: !q.isActive }),
+      });
+      if (res.ok) {
+        showFeedback('success', `Question ${q.code || q.id} ${!q.isActive ? 'activated' : 'disabled'}.`);
+        fetchQuestions();
+      }
+    } catch (err) {
+      showFeedback('error', 'Failed to toggle question status.');
+    }
+  };
+
+  const handleSaveRoundSettings = async (roundId: number) => {
+    const draft = roundSettingsDraft[roundId];
+    if (!draft) return;
+    setSavingRoundId(roundId);
+    try {
+      const res = await fetch(`/api/admin/rounds/${roundId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          durationMinutes: draft.durationMinutes,
+          qualifyingPercentage: draft.qualifyingPercentage,
+        }),
+      });
+      if (res.ok) {
+        showFeedback('success', 'Round settings updated successfully.');
+        fetchSettingsAndRounds();
+      } else {
+        showFeedback('error', 'Failed to update round configuration.');
+      }
+    } catch (err) {
+      showFeedback('error', 'Error updating round configuration.');
+    } finally {
+      setSavingRoundId(null);
+    }
+  };
+
+  const handleManualUnlockRound = async (userId: number, roundNumber: number) => {
+    try {
+      const res = await fetch(`/api/admin/participants/${userId}/unlock-round`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ roundNumber }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showFeedback('success', data.message || `Round ${roundNumber} unlocked.`);
+        if (selectedParticipantId) handleOpenProfile(selectedParticipantId);
+        fetchParticipants();
+      } else {
+        showFeedback('error', data.error || 'Failed to unlock round.');
+      }
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Error unlocking round.');
+    }
+  };
+
+  const handleAuthorizeRetake = async (userId: number, roundNumber: number) => {
+    try {
+      const res = await fetch(`/api/admin/participants/${userId}/authorize-retake`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ roundNumber }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        showFeedback('success', data.message || `Retake authorized for Round ${roundNumber}.`);
+        if (selectedParticipantId) handleOpenProfile(selectedParticipantId);
+        fetchParticipants();
+      } else {
+        showFeedback('error', data.error || 'Failed to authorize retake.');
+      }
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Error authorizing retake.');
+    }
+  };
+
+  // Authoritative server-side participant action dispatcher
+  const executeParticipantAction = async () => {
+    if (!actionModal) return;
+    setActionModal((prev) => (prev ? { ...prev, loading: true } : null));
+
+    const { type, participant, reason, notes } = actionModal;
+
+    try {
+      let res: Response;
+      if (type === 'approve_resume') {
+        const endpoint = participant.currentAttemptId
+          ? `/api/admin/attempts/${participant.currentAttemptId}/approve-resume`
+          : `/api/admin/participants/${participant.id}/resume`;
+        res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ notes: notes || 'Admin approved resumption.' }),
+        });
+      } else if (type === 'terminate') {
+        res = await fetch(`/api/admin/participants/${participant.id}/terminate`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ reason: reason || 'Terminated after incident review.' }),
+        });
+      } else if (type === 'remove') {
+        res = await fetch(`/api/admin/participants/${participant.id}/remove`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ reason: reason || 'Removed from competition.' }),
+        });
+      } else if (type === 'readd') {
+        res = await fetch(`/api/admin/participants/${participant.id}/readd`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ notes: notes || 'Re-added for fresh attempt.' }),
+        });
+      } else if (type === 'delete') {
+        res = await fetch(`/api/admin/participants/${participant.id}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        });
+      } else {
+        return;
+      }
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Administrative action rejected by server.');
+      }
+
+      showFeedback('success', data.message || 'Action executed successfully.');
+      setActionModal(null);
+      loadAllData();
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Operation failed.');
+      setActionModal((prev) => (prev ? { ...prev, loading: false } : null));
     }
   };
 
@@ -239,26 +531,25 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
           headers: { Authorization: `Bearer ${token}` },
         });
         if (res.ok) {
-          alert('Participant pardoned. Question access restored.');
+          showFeedback('success', 'Participant pardoned. Question access restored.');
           loadAllData();
         }
       } else {
-        const reason = window.prompt('Specify disqualification reason:') || 'Disqualified by Chief Proctor.';
         const res = await fetch(`/api/admin/participants/${id}/disqualify`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${token}`,
           },
-          body: JSON.stringify({ reason }),
+          body: JSON.stringify({ reason: 'Disqualified by Chief Proctor.' }),
         });
         if (res.ok) {
-          alert('Participant disqualified.');
+          showFeedback('success', 'Participant disqualified.');
           loadAllData();
         }
       }
-    } catch (err) {
-      console.error('Action failed:', err);
+    } catch (err: any) {
+      showFeedback('error', err.message || 'Action failed.');
     }
   };
 
@@ -346,8 +637,12 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
         <div className="space-y-6">
           {/* Brand & Badge */}
           <div className="flex items-center gap-3 px-2 py-1">
-            <div className="w-10 h-10 rounded-2xl bg-[#FFF0BA] text-[#111808] flex items-center justify-center font-bold shadow">
-              <Cpu className="w-5 h-5 stroke-[2.5]" />
+            <div className="w-11 h-11 rounded-2xl bg-white p-1 flex items-center justify-center shadow overflow-hidden shrink-0">
+              <img
+                src="/assets/aistudio/acd7f777-797e-4ce6-ae26-4077fe5fb474_aeab48d4.png"
+                alt="TECH ARENA Logo"
+                className="w-full h-full object-contain"
+              />
             </div>
             <div>
               <div className="text-base font-bold font-heading tracking-wider text-[#FFF0BA]">TECH ARENA</div>
@@ -432,6 +727,18 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
             </button>
 
             <button
+              onClick={() => setActiveSection('curriculum')}
+              className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl transition-all cursor-pointer ${
+                activeSection === 'curriculum'
+                  ? 'bg-[#FFF0BA] text-[#111808] shadow-md font-bold'
+                  : 'text-[#FFF0BA]/75 hover:bg-[#1f2b12] hover:text-[#FFF0BA]'
+              }`}
+            >
+              <BookOpen className="w-4 h-4" />
+              <span>7. Curriculum & Questions</span>
+            </button>
+
+            <button
               onClick={() => setActiveSection('controls')}
               className={`w-full flex items-center gap-3 px-3.5 py-3 rounded-2xl transition-all cursor-pointer ${
                 activeSection === 'controls'
@@ -440,7 +747,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
               }`}
             >
               <Sliders className="w-4 h-4" />
-              <span>7. Competition Controls</span>
+              <span>8. Competition Controls</span>
             </button>
 
             <button
@@ -452,7 +759,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
               }`}
             >
               <Download className="w-4 h-4" />
-              <span>8. Reports & Export</span>
+              <span>9. Reports & Export</span>
             </button>
 
             <button
@@ -464,7 +771,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
               }`}
             >
               <Settings className="w-4 h-4" />
-              <span>9. Settings</span>
+              <span>10. Settings</span>
             </button>
           </nav>
         </div>
@@ -841,15 +1148,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                     className="bg-[#FAFAF7] border border-[#E5E0D8] text-xs text-[#111808] rounded-xl px-3 py-2 outline-none cursor-pointer"
                   >
                     <option value="all">All Statuses</option>
+                    <option value="SUSPENDED">SUSPENDED — AWAITING APPROVAL</option>
+                    <option value="IN PROGRESS">IN PROGRESS</option>
+                    <option value="RESUMED">RESUMED</option>
+                    <option value="COMPLETED">COMPLETED</option>
+                    <option value="TIMED OUT">TIMED OUT</option>
+                    <option value="TERMINATED">TERMINATED</option>
+                    <option value="REMOVED">REMOVED</option>
+                    <option value="NOT STARTED">NOT STARTED</option>
                     <option value="ONLINE">ONLINE</option>
                     <option value="OFFLINE">OFFLINE</option>
                     <option value="LOGGED OUT">LOGGED OUT</option>
-                    <option value="CONNECTION LOST">CONNECTION LOST</option>
-                    <option value="IN PROGRESS">IN PROGRESS</option>
-                    <option value="SUBMITTED">SUBMITTED</option>
-                    <option value="COMPLETED">COMPLETED</option>
-                    <option value="TERMINATED">TERMINATED</option>
-                    <option value="DISQUALIFIED">DISQUALIFIED</option>
                   </select>
 
                   <select
@@ -929,16 +1238,29 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                             </td>
                             <td className="py-4 px-4 text-center">
                               <span
-                                className={`text-[10px] font-mono font-bold px-2.5 py-1 rounded-full border ${
-                                  p.competitionStatus === 'IN PROGRESS'
+                                className={`text-[10px] font-mono font-bold px-2.5 py-1 rounded-full border inline-flex items-center gap-1 ${
+                                  p.competitionStatus === 'SUSPENDED — AWAITING ADMIN APPROVAL'
+                                    ? 'bg-amber-100 text-amber-900 border-amber-400 animate-pulse'
+                                    : p.competitionStatus === 'TAB SWITCH DETECTED'
+                                    ? 'bg-amber-100 text-amber-900 border-amber-300'
+                                    : p.competitionStatus === 'RESUMED'
+                                    ? 'bg-sky-100 text-sky-800 border-sky-300'
+                                    : p.competitionStatus === 'IN PROGRESS'
                                     ? 'bg-blue-100 text-blue-800 border-blue-300'
                                     : p.competitionStatus === 'TERMINATED' || p.competitionStatus === 'DISQUALIFIED'
                                     ? 'bg-rose-100 text-rose-800 border-rose-300'
+                                    : p.competitionStatus === 'REMOVED'
+                                    ? 'bg-gray-200 text-gray-700 border-gray-300 line-through'
+                                    : p.competitionStatus === 'TIMED OUT'
+                                    ? 'bg-orange-100 text-orange-800 border-orange-300'
                                     : p.competitionStatus === 'SUBMITTED' || p.competitionStatus === 'COMPLETED'
                                     ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
                                     : 'bg-gray-100 text-gray-700 border-gray-300'
                                 }`}
                               >
+                                {p.competitionStatus === 'SUSPENDED — AWAITING ADMIN APPROVAL' && (
+                                  <ShieldAlert className="w-3 h-3 text-amber-600" />
+                                )}
                                 {p.competitionStatus}
                               </span>
                             </td>
@@ -947,8 +1269,17 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                             </td>
                             <td className="py-4 px-4 text-center font-mono text-xs">
                               {p.timeRemainingSeconds > 0 ? (
-                                <span className="font-bold text-[#111808]">
+                                <span
+                                  className={`font-bold ${
+                                    p.isSuspended || p.competitionStatus === 'SUSPENDED — AWAITING ADMIN APPROVAL'
+                                      ? 'text-amber-700'
+                                      : 'text-[#111808]'
+                                  }`}
+                                >
                                   {Math.floor(p.timeRemainingSeconds / 60)}m {p.timeRemainingSeconds % 60}s
+                                  {(p.isSuspended || p.competitionStatus === 'SUSPENDED — AWAITING ADMIN APPROVAL') && (
+                                    <span className="block text-[10px] text-amber-600 font-normal">FROZEN</span>
+                                  )}
                                 </span>
                               ) : (
                                 <span className="text-[#656858]">—</span>
@@ -961,43 +1292,125 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                               {p.easyScore} / {p.intermediateScore} / {p.hardScore}
                             </td>
                             <td className="py-4 px-4 text-center font-mono">
-                              <span
-                                className={`px-2 py-0.5 rounded ${
-                                  p.violationsCount > 0 ? 'bg-rose-100 text-rose-800 font-bold' : 'text-[#656858]'
+                              <button
+                                onClick={() => setIncidentInspectionTarget(p)}
+                                className={`px-2 py-0.5 rounded text-xs transition-colors cursor-pointer ${
+                                  p.violationsCount > 0
+                                    ? 'bg-amber-100 text-amber-900 border border-amber-300 hover:bg-amber-200 font-bold'
+                                    : 'text-[#656858] hover:text-[#111808]'
                                 }`}
+                                title="Click to view tab switch incidents"
                               >
-                                {p.violationsCount}
-                              </span>
+                                {p.violationsCount || 0} incidents
+                              </button>
                             </td>
                             <td className="py-4 px-4 text-center">
-                              <div className="flex items-center justify-center gap-1.5">
+                              <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                 <button
                                   onClick={() => handleOpenProfile(p.id)}
-                                  className="px-2.5 py-1 rounded-lg bg-[#FAFAF7] hover:bg-[#E5E0D8] text-[#111808] border border-[#E5E0D8] text-[11px] font-semibold cursor-pointer"
+                                  className="px-2 py-1 rounded-lg bg-[#FAFAF7] hover:bg-[#E5E0D8] text-[#111808] border border-[#E5E0D8] text-[11px] font-semibold cursor-pointer"
                                   title="Detailed Profile & Timeline"
                                 >
                                   Profile
                                 </button>
 
-                                {p.competitionStatus === 'IN PROGRESS' && (
+                                {/* 1. APPROVE RESUME: Valid when task is suspended */}
+                                {p.competitionStatus === 'SUSPENDED — AWAITING ADMIN APPROVAL' && (
                                   <button
-                                    onClick={() => handleTerminateAttempt(p.id)}
-                                    className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-semibold cursor-pointer shadow-sm"
-                                    title="Remotely Terminate Attempt"
+                                    onClick={() =>
+                                      setActionModal({
+                                        type: 'approve_resume',
+                                        participant: p,
+                                        reason: '',
+                                        notes: 'Chief Proctor verified incident and approved continuation.',
+                                        loading: false,
+                                      })
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer shadow-sm flex items-center gap-1"
+                                    title="Approve task resumption with preserved remaining time"
                                   >
-                                    Terminate
+                                    <Play className="w-3 h-3" />
+                                    <span>Resume</span>
                                   </button>
                                 )}
 
+                                {/* 2. TERMINATE: Valid for active attempts or suspended attempts */}
+                                {(p.competitionStatus === 'IN PROGRESS' ||
+                                  p.competitionStatus === 'RESUMED' ||
+                                  p.competitionStatus === 'SUSPENDED — AWAITING ADMIN APPROVAL' ||
+                                  p.competitionStatus === 'TAB SWITCH DETECTED') && (
+                                  <button
+                                    onClick={() =>
+                                      setActionModal({
+                                        type: 'terminate',
+                                        participant: p,
+                                        reason: 'Tournament proctoring enforcement: Unauthorized tab or window switch.',
+                                        notes: '',
+                                        loading: false,
+                                      })
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer shadow-sm flex items-center gap-1"
+                                    title="Permanently terminate participant attempt"
+                                  >
+                                    <XCircle className="w-3 h-3" />
+                                    <span>Terminate</span>
+                                  </button>
+                                )}
+
+                                {/* 3. REMOVE: Valid when participant is not already removed */}
+                                {!p.isRemoved && p.competitionStatus !== 'SUSPENDED — AWAITING ADMIN APPROVAL' && (
+                                  <button
+                                    onClick={() =>
+                                      setActionModal({
+                                        type: 'remove',
+                                        participant: p,
+                                        reason: 'Removed from competition roster by tournament director.',
+                                        notes: '',
+                                        loading: false,
+                                      })
+                                    }
+                                    className="px-2 py-1 rounded-lg bg-[#111808] hover:bg-[#1f2b12] text-[#FFF0BA] text-[11px] font-semibold cursor-pointer shadow-sm"
+                                    title="Remove participant from tournament"
+                                  >
+                                    Remove
+                                  </button>
+                                )}
+
+                                {/* 4. RE-ADD: Only valid when participant is removed (starts clean attempt) */}
+                                {p.isRemoved && (
+                                  <button
+                                    onClick={() =>
+                                      setActionModal({
+                                        type: 'readd',
+                                        participant: p,
+                                        reason: '',
+                                        notes: 'Re-added to roster for clean, fresh attempt with full countdown timer.',
+                                        loading: false,
+                                      })
+                                    }
+                                    className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[11px] font-bold cursor-pointer shadow-sm flex items-center gap-1"
+                                    title="Re-add participant to tournament with fresh attempt"
+                                  >
+                                    <UserCheck className="w-3 h-3" />
+                                    <span>Re-Add (Fresh)</span>
+                                  </button>
+                                )}
+
+                                {/* 5. DELETE: Permanent deletion with cascade cleanup */}
                                 <button
-                                  onClick={() => handleToggleBlock(p.id, p.isBlocked)}
-                                  className={`px-2 py-1 rounded-lg text-[11px] font-semibold cursor-pointer border ${
-                                    p.isBlocked
-                                      ? 'bg-emerald-100 text-emerald-800 border-emerald-300 hover:bg-emerald-200'
-                                      : 'bg-rose-100 text-rose-800 border-rose-300 hover:bg-rose-200'
-                                  }`}
+                                  onClick={() =>
+                                    setActionModal({
+                                      type: 'delete',
+                                      participant: p,
+                                      reason: '',
+                                      notes: '',
+                                      loading: false,
+                                    })
+                                  }
+                                  className="p-1 rounded-lg text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200 cursor-pointer"
+                                  title="Permanently delete participant and clear associated attempts"
                                 >
-                                  {p.isBlocked ? 'Pardon' : 'Disqualify'}
+                                  <Trash2 className="w-3.5 h-3.5" />
                                 </button>
                               </div>
                             </td>
@@ -1080,7 +1493,15 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                         </button>
 
                         <button
-                          onClick={() => handleTerminateAttempt(s.userId)}
+                          onClick={() =>
+                            setActionModal({
+                              type: 'terminate',
+                              participant: { id: s.userId, teamName: s.teamName, code: s.code },
+                              reason: 'Terminated during live surveillance monitoring.',
+                              notes: '',
+                              loading: false,
+                            })
+                          }
                           className="px-3 py-1 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold cursor-pointer"
                         >
                           Terminate
@@ -1449,7 +1870,387 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
           )}
 
           {/* ======================================================== */}
-          {/* SECTION 7: COMPETITION CONTROLS */}
+          {/* SECTION 7: CURRICULUM & QUESTION BANK */}
+          {/* ======================================================== */}
+          {activeSection === 'curriculum' && (
+            <div className="space-y-8">
+              {/* Curriculum Overview Banner */}
+              <div className="bg-[#111808] border border-[#111808] rounded-[32px] p-6 sm:p-8 text-[#FFF0BA] shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
+                <div>
+                  <div className="text-[10px] font-mono tracking-widest text-[#FFF0BA]/70 uppercase mb-2">
+                    ACADEMIC CURRICULUM MANAGEMENT · 28 STANDARDIZED QUESTIONS
+                  </div>
+                  <h3 className="text-xl sm:text-2xl font-bold font-heading text-white">
+                    COMPETITION QUESTION BANK & ROUND ARCHITECTURE
+                  </h3>
+                  <p className="text-xs sm:text-sm text-[#A6A998] mt-2 max-w-2xl leading-relaxed">
+                    Authoritative 3-tier competitive computer science syllabus for Class 11–12, BCA, and Engineering students.
+                    Questions statements, options, answer keys, and pedagogical explanations are managed server-side.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-3 shrink-0">
+                  <button
+                    onClick={fetchQuestions}
+                    className="px-4 py-2.5 rounded-xl bg-[#1f2b12] hover:bg-[#2e3d1e] text-[#FFF0BA] text-xs font-mono font-bold flex items-center gap-2 border border-[#2e3d1e] cursor-pointer transition-all"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${loadingQuestions ? 'animate-spin' : ''}`} />
+                    <span>Refresh</span>
+                  </button>
+                  <button
+                    onClick={() =>
+                      setQuestionModal({
+                        mode: 'create',
+                        data: {
+                          roundId: questionRoundFilter || 1,
+                          code: '',
+                          category: 'Computer Fundamentals',
+                          points: questionRoundFilter === 2 ? 2 : questionRoundFilter === 3 ? 3 : 1,
+                          prompt: '',
+                          option0: '',
+                          option1: '',
+                          option2: '',
+                          option3: '',
+                          correctOption: 0,
+                          explanation: '',
+                          isActive: true,
+                        },
+                      })
+                    }
+                    className="px-5 py-2.5 rounded-xl bg-[#FFF0BA] hover:bg-[#FFF4CC] text-[#111808] text-xs font-mono font-bold flex items-center gap-2 cursor-pointer shadow-md transition-all"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Add Question</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Round Tier Architecture & Timing Cards */}
+              <div>
+                <h4 className="text-xs font-bold font-mono uppercase text-[#111808] tracking-wider mb-3 flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-[#111808]" />
+                  Sequential Round Settings & Qualifying Thresholds
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                  {rounds.map((r) => {
+                    const draft = roundSettingsDraft[r.id] || {
+                      durationMinutes: r.durationMinutes || 10,
+                      qualifyingPercentage: r.qualifyingPercentage || 60,
+                    };
+                    const rNum = r.roundNumber;
+                    const tierLabel = rNum === 1 ? 'EASY' : rNum === 2 ? 'MEDIUM' : 'VERY DIFFICULT';
+                    const maxMarks = rNum === 1 ? 8 : rNum === 2 ? 20 : 30;
+                    const count = questionsList.filter((q) => q.roundId === r.id).length;
+
+                    return (
+                      <div
+                        key={r.id}
+                        className="bg-white border border-[#E5E0D8] rounded-[28px] p-6 shadow-sm flex flex-col justify-between space-y-4"
+                      >
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-mono font-bold uppercase text-[#111808]">
+                              ROUND 0{rNum} — {tierLabel}
+                            </span>
+                            <span
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded-md font-bold ${
+                                r.isOpen
+                                  ? 'bg-emerald-50 text-emerald-800 border border-emerald-300'
+                                  : 'bg-rose-50 text-rose-800 border border-rose-300'
+                              }`}
+                            >
+                              {r.isOpen ? 'ACTIVE' : 'LOCKED'}
+                            </span>
+                          </div>
+
+                          <div className="text-xs text-[#656858] space-y-1">
+                            <div className="flex justify-between">
+                              <span>Questions Loaded:</span>
+                              <strong className="font-mono text-[#111808]">{count} Questions</strong>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>Maximum Marks:</span>
+                              <strong className="font-mono text-[#111808]">{maxMarks} Marks ({rNum} Mark{rNum > 1 ? 's' : ''}/Q)</strong>
+                            </div>
+                          </div>
+
+                          {/* Editable Parameters */}
+                          <div className="pt-2 border-t border-[#E5E0D8] space-y-3">
+                            <div>
+                              <label className="block text-[11px] font-bold text-[#111808] mb-1">
+                                Duration (Minutes):
+                              </label>
+                              <input
+                                type="number"
+                                min={1}
+                                max={120}
+                                value={draft.durationMinutes}
+                                onChange={(e) =>
+                                  setRoundSettingsDraft((prev) => ({
+                                    ...prev,
+                                    [r.id]: {
+                                      ...draft,
+                                      durationMinutes: Number(e.target.value),
+                                    },
+                                  }))
+                                }
+                                className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl px-3 py-2 text-xs font-mono font-bold text-[#111808] outline-none"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-[11px] font-bold text-[#111808] mb-1">
+                                Qualifying Threshold (%):
+                              </label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="number"
+                                  min={0}
+                                  max={100}
+                                  value={draft.qualifyingPercentage}
+                                  onChange={(e) =>
+                                    setRoundSettingsDraft((prev) => ({
+                                      ...prev,
+                                      [r.id]: {
+                                        ...draft,
+                                        qualifyingPercentage: Number(e.target.value),
+                                      },
+                                    }))
+                                  }
+                                  className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl px-3 py-2 text-xs font-mono font-bold text-[#111808] outline-none"
+                                />
+                                <span className="text-xs font-mono text-[#656858] shrink-0">
+                                  ≥ {Math.ceil((maxMarks * draft.qualifyingPercentage) / 100)} pts
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-4 border-t border-[#E5E0D8] flex items-center gap-2">
+                          <button
+                            onClick={() => handleSaveRoundSettings(r.id)}
+                            disabled={savingRoundId === r.id}
+                            className="flex-1 py-2.5 rounded-xl bg-[#111808] hover:bg-[#1f2b12] text-[#FFF0BA] text-xs font-mono font-bold cursor-pointer transition-all disabled:opacity-50"
+                          >
+                            {savingRoundId === r.id ? 'Saving...' : 'Save Settings'}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Question Bank Explorer */}
+              <div className="bg-white border border-[#E5E0D8] rounded-[32px] p-6 sm:p-7 shadow-sm space-y-6">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-[#E5E0D8]">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      onClick={() => setQuestionRoundFilter(0)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer ${
+                        questionRoundFilter === 0
+                          ? 'bg-[#111808] text-[#FFF0BA]'
+                          : 'bg-[#FAFAF7] text-[#656858] hover:text-[#111808] border border-[#E5E0D8]'
+                      }`}
+                    >
+                      All Questions ({questionsList.length})
+                    </button>
+                    <button
+                      onClick={() => setQuestionRoundFilter(1)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer ${
+                        questionRoundFilter === 1
+                          ? 'bg-[#111808] text-[#FFF0BA]'
+                          : 'bg-[#FAFAF7] text-[#656858] hover:text-[#111808] border border-[#E5E0D8]'
+                      }`}
+                    >
+                      Round 1 — EASY ({questionsList.filter((q) => q.roundId === 1).length})
+                    </button>
+                    <button
+                      onClick={() => setQuestionRoundFilter(2)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer ${
+                        questionRoundFilter === 2
+                          ? 'bg-[#111808] text-[#FFF0BA]'
+                          : 'bg-[#FAFAF7] text-[#656858] hover:text-[#111808] border border-[#E5E0D8]'
+                      }`}
+                    >
+                      Round 2 — MEDIUM ({questionsList.filter((q) => q.roundId === 2).length})
+                    </button>
+                    <button
+                      onClick={() => setQuestionRoundFilter(3)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-mono font-bold transition-all cursor-pointer ${
+                        questionRoundFilter === 3
+                          ? 'bg-[#111808] text-[#FFF0BA]'
+                          : 'bg-[#FAFAF7] text-[#656858] hover:text-[#111808] border border-[#E5E0D8]'
+                      }`}
+                    >
+                      Round 3 — VERY DIFFICULT ({questionsList.filter((q) => q.roundId === 3).length})
+                    </button>
+                  </div>
+
+                  {/* Search Bar */}
+                  <div className="relative w-full sm:w-64">
+                    <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-[#656858]" />
+                    <input
+                      type="text"
+                      placeholder="Search questions by code or keyword..."
+                      value={questionSearch}
+                      onChange={(e) => setQuestionSearch(e.target.value)}
+                      className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl pl-9 pr-3 py-2 text-xs text-[#111808] outline-none"
+                    />
+                  </div>
+                </div>
+
+                {/* Questions Grid */}
+                <div className="space-y-4">
+                  {questionsList
+                    .filter((q) => (questionRoundFilter === 0 ? true : q.roundId === questionRoundFilter))
+                    .filter((q) => {
+                      if (!questionSearch) return true;
+                      const s = questionSearch.toLowerCase();
+                      return (
+                        (q.code && q.code.toLowerCase().includes(s)) ||
+                        (q.category && q.category.toLowerCase().includes(s)) ||
+                        (q.prompt && q.prompt.toLowerCase().includes(s))
+                      );
+                    })
+                    .map((q) => {
+                      const optLetters = ['A', 'B', 'C', 'D'];
+                      const qOptions = Array.isArray(q.options) ? q.options : [];
+
+                      return (
+                        <div
+                          key={q.id}
+                          className={`p-5 rounded-2xl border transition-all ${
+                            q.isActive !== false
+                              ? 'bg-[#FAFAF7] border-[#E5E0D8]'
+                              : 'bg-gray-100/70 border-gray-300 opacity-60'
+                          }`}
+                        >
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#E5E0D8]">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="px-2.5 py-1 rounded-lg bg-[#111808] text-[#FFF0BA] font-mono text-xs font-bold">
+                                {q.code || `Q${q.id}`}
+                              </span>
+                              <span className="px-2.5 py-1 rounded-lg bg-white border border-[#E5E0D8] text-[11px] font-mono text-[#656858]">
+                                Round 0{q.roundId}
+                              </span>
+                              <span className="px-2.5 py-1 rounded-lg bg-white border border-[#E5E0D8] text-[11px] font-semibold text-[#111808]">
+                                {q.category || 'General'}
+                              </span>
+                              <span className="px-2 py-0.5 rounded-md bg-[#FFF0BA] text-[#111808] font-mono text-[10px] font-bold">
+                                {q.points || 1} Mark{q.points > 1 ? 's' : ''}
+                              </span>
+                              {q.isActive === false && (
+                                <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 font-mono text-[10px] font-bold">
+                                  Disabled
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 self-end sm:self-auto">
+                              <button
+                                onClick={() => handleToggleQuestionActive(q)}
+                                className="px-2.5 py-1 rounded-lg bg-white border border-[#E5E0D8] hover:bg-[#F0EEE6] text-[11px] font-mono text-[#656858] cursor-pointer"
+                              >
+                                {q.isActive !== false ? 'Disable' : 'Enable'}
+                              </button>
+                              <button
+                                onClick={() =>
+                                  setQuestionModal({
+                                    mode: 'edit',
+                                    data: {
+                                      id: q.id,
+                                      roundId: q.roundId,
+                                      code: q.code || '',
+                                      category: q.category || '',
+                                      points: q.points || 1,
+                                      prompt: q.prompt || '',
+                                      option0: qOptions[0] || '',
+                                      option1: qOptions[1] || '',
+                                      option2: qOptions[2] || '',
+                                      option3: qOptions[3] || '',
+                                      correctOption: q.correctOption ?? 0,
+                                      explanation: q.explanation || '',
+                                      isActive: q.isActive !== false,
+                                    },
+                                  })
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-white border border-[#E5E0D8] hover:bg-[#F0EEE6] text-[11px] font-mono text-[#111808] flex items-center gap-1 cursor-pointer"
+                              >
+                                <Edit3 className="w-3 h-3" />
+                                <span>Edit</span>
+                              </button>
+                              <button
+                                onClick={() => handleDeleteQuestion(q.id)}
+                                className="p-1.5 rounded-lg bg-white border border-[#E5E0D8] hover:bg-rose-50 text-rose-600 hover:border-rose-300 cursor-pointer"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Statement */}
+                          <div className="pt-3 pb-3">
+                            <p className="text-xs sm:text-sm font-medium text-[#111808] whitespace-pre-wrap font-sans">
+                              {q.prompt}
+                            </p>
+                          </div>
+
+                          {/* 4 Options Grid */}
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1 pb-3">
+                            {qOptions.map((opt: string, optIdx: number) => {
+                              const isCorrect = q.correctOption === optIdx;
+                              return (
+                                <div
+                                  key={optIdx}
+                                  className={`p-2.5 rounded-xl text-xs flex items-center justify-between border ${
+                                    isCorrect
+                                      ? 'bg-emerald-50 border-emerald-300 text-emerald-950 font-semibold'
+                                      : 'bg-white border-[#E5E0D8] text-[#111808]'
+                                  }`}
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <span
+                                      className={`w-5 h-5 rounded-md flex items-center justify-center font-mono text-[10px] font-bold ${
+                                        isCorrect
+                                          ? 'bg-emerald-600 text-white'
+                                          : 'bg-[#F0EEE6] text-[#656858]'
+                                      }`}
+                                    >
+                                      {optLetters[optIdx]}
+                                    </span>
+                                    <span>{opt}</span>
+                                  </div>
+                                  {isCorrect && (
+                                    <span className="text-[10px] font-mono font-bold text-emerald-700 flex items-center gap-0.5">
+                                      <CheckCircle2 className="w-3 h-3" /> Correct Key
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+
+                          {/* Pedagogical Explanation */}
+                          {q.explanation && (
+                            <div className="p-3 rounded-xl bg-white border border-[#E5E0D8] text-[11px] text-[#656858]">
+                              <span className="font-bold text-[#111808] block mb-0.5 font-mono uppercase">
+                                Pedagogical Explanation (Server-Authoritative Key):
+                              </span>
+                              <p className="leading-relaxed">{q.explanation}</p>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ======================================================== */}
+          {/* SECTION 8: COMPETITION CONTROLS */}
           {/* ======================================================== */}
           {activeSection === 'controls' && (
             <div className="space-y-8">
@@ -1636,6 +2437,26 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                 </p>
               </div>
 
+              {/* Primary 3-Round Competition Results Export */}
+              <div className="bg-[#111808] text-[#FFF0BA] border border-[#111808] rounded-[28px] p-6 shadow-md flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                <div className="space-y-1">
+                  <div className="flex items-center gap-2">
+                    <FileSpreadsheet className="w-5 h-5 text-[#FFF0BA]" />
+                    <h4 className="font-bold text-sm font-heading text-white">Full 3-Round Competition Results CSV</h4>
+                  </div>
+                  <p className="text-xs text-[#A6A998] max-w-xl">
+                    Comprehensive tournament summary with Round 1, 2, 3 scores, qualification statuses, total marks (out of 58), completion timestamps, and violation strikes.
+                  </p>
+                </div>
+                <button
+                  onClick={() => handleExportCSV('competition_results')}
+                  className="px-5 py-2.5 rounded-xl bg-[#FFF0BA] hover:bg-[#FFF4CC] text-[#111808] text-xs font-mono font-bold flex items-center gap-2 cursor-pointer shadow-sm transition-all shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Export 3-Round CSV</span>
+                </button>
+              </div>
+
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <div className="bg-white border border-[#E5E0D8] rounded-[28px] p-6 shadow-sm flex flex-col justify-between">
                   <div className="space-y-2">
@@ -1731,14 +2552,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                 <div className="space-y-4 pt-4 border-t border-[#E5E0D8]">
                   <div className="p-4 rounded-2xl bg-[#FAFAF7] border border-[#E5E0D8]">
                     <span className="text-xs font-bold text-[#111808] block mb-1">
-                      Initial Administrator Passkey
+                      Administrator Authentication Security
                     </span>
-                    <p className="text-xs text-[#656858] mb-2">
-                      The primary administrator password configured for Tech Arena is:
+                    <p className="text-xs text-[#656858]">
+                      Chief proctor authentication is validated server-side against secure environment variables (<code className="font-mono text-[#111808] font-bold">ADMIN_ACCESS_PASSWORD</code>). Master keys are never exposed in client bundles or responses.
                     </p>
-                    <code className="text-xs font-mono font-bold px-3 py-1.5 rounded-xl bg-[#111808] text-[#FFF0BA] inline-block">
-                      Matrix2026
-                    </code>
                   </div>
 
                   <div className="p-4 rounded-2xl bg-[#FAFAF7] border border-[#E5E0D8]">
@@ -1803,7 +2621,177 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                 </div>
               </div>
 
-              {/* Chronological Event Timeline */}
+              {/* Three-Round Qualification & Progression Panel */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold font-heading uppercase text-[#111808] flex items-center justify-between">
+                  <span>3-ROUND COMPETITION PROGRESSION & QUALIFICATION</span>
+                  <span className="text-[10px] font-mono text-[#656858]">DEFAULT PASS: 60%</span>
+                </h4>
+
+                <div className="space-y-2.5">
+                  {/* Round 1 */}
+                  <div className="p-3.5 rounded-2xl bg-[#FAFAF7] border border-[#E5E0D8] text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-[#111808]">ROUND 01 (EASY)</span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white border border-[#E5E0D8] text-[#656858]">
+                          Max 8 Pts
+                        </span>
+                      </div>
+                      <span className="font-mono font-bold text-[#111808]">
+                        Score: {participantProfile.user?.r1Score || 0} / 8
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-[#656858]">
+                        Status:{' '}
+                        {participantProfile.user?.r1Completed ? (
+                          <strong className="text-[#111808]">Submitted</strong>
+                        ) : (
+                          'Not Attempted'
+                        )}
+                      </span>
+                      <span className="font-mono">
+                        {participantProfile.user?.roundOverrides?.['1'] || participantProfile.user?.roundOverrides?.['r1'] ? (
+                          <span className="text-purple-700 font-bold">Admin Override</span>
+                        ) : (participantProfile.user?.r1Score || 0) >= 5 ? (
+                          <span className="text-emerald-700 font-bold">Qualified (≥5)</span>
+                        ) : participantProfile.user?.r1Completed ? (
+                          <span className="text-rose-700 font-bold">Did Not Qualify</span>
+                        ) : (
+                          <span className="text-[#656858]">Pending</span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1 border-t border-[#E5E0D8]">
+                      <button
+                        type="button"
+                        onClick={() => handleManualUnlockRound(participantProfile.user.id, 1)}
+                        className="flex-1 py-1.5 rounded-lg bg-white border border-[#E5E0D8] hover:bg-[#F0EEE6] text-[11px] font-mono text-[#111808] font-semibold cursor-pointer"
+                      >
+                        Override / Unlock R1
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAuthorizeRetake(participantProfile.user.id, 1)}
+                        className="flex-1 py-1.5 rounded-lg bg-white border border-[#E5E0D8] hover:bg-[#F0EEE6] text-[11px] font-mono text-[#111808] font-semibold cursor-pointer"
+                      >
+                        Authorize Retake R1
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Round 2 */}
+                  <div className="p-3.5 rounded-2xl bg-[#FAFAF7] border border-[#E5E0D8] text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-[#111808]">ROUND 02 (MEDIUM)</span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white border border-[#E5E0D8] text-[#656858]">
+                          Max 20 Pts
+                        </span>
+                      </div>
+                      <span className="font-mono font-bold text-[#111808]">
+                        Score: {participantProfile.user?.r2Score || 0} / 20
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-[#656858]">
+                        Status:{' '}
+                        {participantProfile.user?.r2Completed ? (
+                          <strong className="text-[#111808]">Submitted</strong>
+                        ) : (
+                          'Not Attempted'
+                        )}
+                      </span>
+                      <span className="font-mono">
+                        {participantProfile.user?.roundOverrides?.['2'] || participantProfile.user?.roundOverrides?.['r2'] ? (
+                          <span className="text-purple-700 font-bold">Admin Override</span>
+                        ) : (participantProfile.user?.r2Score || 0) >= 12 ? (
+                          <span className="text-emerald-700 font-bold">Qualified (≥12)</span>
+                        ) : participantProfile.user?.r2Completed ? (
+                          <span className="text-rose-700 font-bold">Did Not Qualify</span>
+                        ) : (
+                          <span className="text-[#656858]">Pending</span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1 border-t border-[#E5E0D8]">
+                      <button
+                        type="button"
+                        onClick={() => handleManualUnlockRound(participantProfile.user.id, 2)}
+                        className="flex-1 py-1.5 rounded-lg bg-white border border-[#E5E0D8] hover:bg-[#F0EEE6] text-[11px] font-mono text-[#111808] font-semibold cursor-pointer"
+                      >
+                        Override / Unlock R2
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAuthorizeRetake(participantProfile.user.id, 2)}
+                        className="flex-1 py-1.5 rounded-lg bg-white border border-[#E5E0D8] hover:bg-[#F0EEE6] text-[11px] font-mono text-[#111808] font-semibold cursor-pointer"
+                      >
+                        Authorize Retake R2
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Round 3 */}
+                  <div className="p-3.5 rounded-2xl bg-[#FAFAF7] border border-[#E5E0D8] text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono font-bold text-[#111808]">ROUND 03 (VERY DIFFICULT)</span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white border border-[#E5E0D8] text-[#656858]">
+                          Max 30 Pts
+                        </span>
+                      </div>
+                      <span className="font-mono font-bold text-[#111808]">
+                        Score: {participantProfile.user?.r3Score || 0} / 30
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span className="text-[#656858]">
+                        Status:{' '}
+                        {participantProfile.user?.r3Completed ? (
+                          <strong className="text-[#111808]">Submitted</strong>
+                        ) : (
+                          'Not Attempted'
+                        )}
+                      </span>
+                      <span className="font-mono">
+                        {participantProfile.user?.roundOverrides?.['3'] || participantProfile.user?.roundOverrides?.['r3'] ? (
+                          <span className="text-purple-700 font-bold">Admin Override</span>
+                        ) : (participantProfile.user?.r3Score || 0) >= 18 ? (
+                          <span className="text-emerald-700 font-bold">Qualified (≥18)</span>
+                        ) : participantProfile.user?.r3Completed ? (
+                          <span className="text-rose-700 font-bold">Did Not Qualify</span>
+                        ) : (
+                          <span className="text-[#656858]">Pending</span>
+                        )}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1 border-t border-[#E5E0D8]">
+                      <button
+                        type="button"
+                        onClick={() => handleManualUnlockRound(participantProfile.user.id, 3)}
+                        className="flex-1 py-1.5 rounded-lg bg-white border border-[#E5E0D8] hover:bg-[#F0EEE6] text-[11px] font-mono text-[#111808] font-semibold cursor-pointer"
+                      >
+                        Override / Unlock R3
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleAuthorizeRetake(participantProfile.user.id, 3)}
+                        className="flex-1 py-1.5 rounded-lg bg-white border border-[#E5E0D8] hover:bg-[#F0EEE6] text-[11px] font-mono text-[#111808] font-semibold cursor-pointer"
+                      >
+                        Authorize Retake R3
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
               <div>
                 <h4 className="text-xs font-bold font-heading uppercase text-[#111808] mb-3">
                   CHRONOLOGICAL ACTIVITY & SURVEILLANCE TIMELINE
@@ -1927,6 +2915,518 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ token, onLogout, onNavig
                   className="px-5 py-2.5 rounded-xl bg-[#111808] text-[#FFF0BA] text-xs font-bold shadow cursor-pointer hover:bg-[#1f2b12]"
                 >
                   {submittingCorrection ? 'Recording...' : 'Save Correction'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* FEEDBACK TOAST NOTIFICATION */}
+      {feedbackToast && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <div
+            className={`px-5 py-3.5 rounded-2xl shadow-2xl border text-xs font-mono font-bold flex items-center gap-3 ${
+              feedbackToast.type === 'success'
+                ? 'bg-[#111808] text-[#FFF0BA] border-[#FFF0BA]/30 shadow-[#111808]/40'
+                : 'bg-rose-950 text-rose-200 border-rose-500 shadow-rose-950/50'
+            }`}
+          >
+            {feedbackToast.type === 'success' ? (
+              <CheckCircle className="w-4 h-4 text-emerald-400" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-400" />
+            )}
+            <span>{feedbackToast.message}</span>
+            <button
+              onClick={() => setFeedbackToast(null)}
+              className="ml-2 text-white/60 hover:text-white cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* TAB SWITCH INCIDENT INSPECTOR MODAL */}
+      {incidentInspectionTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-lg bg-white border border-[#E5E0D8] rounded-[32px] p-6 sm:p-8 shadow-2xl">
+            <div className="flex items-center justify-between pb-4 border-b border-[#E5E0D8]">
+              <div>
+                <h3 className="text-base font-bold font-heading text-[#111808] flex items-center gap-2">
+                  <ShieldAlert className="w-4 h-4 text-amber-600" />
+                  TAB SWITCH SURVEILLANCE AUDIT
+                </h3>
+                <p className="text-xs text-[#656858]">
+                  {incidentInspectionTarget.teamName} ({incidentInspectionTarget.code}) • {incidentInspectionTarget.college}
+                </p>
+              </div>
+              <button
+                onClick={() => setIncidentInspectionTarget(null)}
+                className="p-1 rounded-lg text-[#656858] hover:text-[#111808] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="py-4 space-y-3 max-h-80 overflow-y-auto pr-1">
+              {!incidentInspectionTarget.incidents || incidentInspectionTarget.incidents.length === 0 ? (
+                <p className="text-xs text-[#656858] py-8 text-center">
+                  No tab switch incidents recorded for this participant.
+                </p>
+              ) : (
+                incidentInspectionTarget.incidents.map((inc: any, idx: number) => (
+                  <div
+                    key={inc.id || idx}
+                    className="p-3.5 rounded-2xl bg-[#FAFAF7] border border-[#E5E0D8] text-xs space-y-1.5"
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-amber-900 bg-amber-100 border border-amber-300 px-2 py-0.5 rounded text-[10px]">
+                        Incident #{incidentInspectionTarget.incidents.length - idx} • {inc.violationType}
+                      </span>
+                      <span className="text-[11px] font-mono text-[#656858]">
+                        {new Date(inc.serverTimestamp).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p className="text-[#111808] font-medium text-xs">{inc.details}</p>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-[#E5E0D8] flex items-center justify-between">
+              <span className="text-xs font-mono text-[#656858]">
+                Status: <strong className="text-[#111808]">{incidentInspectionTarget.competitionStatus}</strong>
+              </span>
+              <button
+                onClick={() => setIncidentInspectionTarget(null)}
+                className="px-4 py-2 rounded-xl bg-[#111808] text-[#FFF0BA] text-xs font-bold hover:bg-[#1f2b12] cursor-pointer"
+              >
+                Close Audit
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DEDICATED PARTICIPANT CONTROL ACTION MODAL */}
+      {actionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+          <div className="w-full max-w-md bg-white border border-[#E5E0D8] rounded-[32px] p-6 sm:p-8 shadow-2xl">
+            <div className="flex items-center justify-between pb-4 border-b border-[#E5E0D8]">
+              <div>
+                <h3 className="text-base font-bold font-heading text-[#111808] uppercase">
+                  {actionModal.type === 'approve_resume' && 'Authorize Task Resumption'}
+                  {actionModal.type === 'terminate' && 'Terminate Participant Attempt'}
+                  {actionModal.type === 'remove' && 'Remove Participant from Roster'}
+                  {actionModal.type === 'readd' && 'Re-Add Participant to Tournament'}
+                  {actionModal.type === 'delete' && 'Permanently Delete Participant'}
+                </h3>
+                <p className="text-xs text-[#656858] font-mono">
+                  {actionModal.participant.teamName} ({actionModal.participant.code})
+                </p>
+              </div>
+              <button
+                onClick={() => setActionModal(null)}
+                className="p-1 rounded-lg text-[#656858] hover:text-[#111808] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4 my-5">
+              {/* Context description per action */}
+              {actionModal.type === 'approve_resume' && (
+                <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 space-y-1">
+                  <p className="font-bold">Resume Policy:</p>
+                  <p>
+                    Approving resumption unlocks the participant terminal, compensates the exact suspended interval, and restores all prior answers with remaining time intact.
+                  </p>
+                </div>
+              )}
+
+              {actionModal.type === 'terminate' && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-200 text-xs text-rose-900 space-y-1">
+                  <p className="font-bold">Termination Notice:</p>
+                  <p>
+                    Immediately revokes participant ability to continue, edit, or submit questions. Active session will be invalidated on the server.
+                  </p>
+                </div>
+              )}
+
+              {actionModal.type === 'remove' && (
+                <div className="p-3.5 rounded-2xl bg-gray-100 border border-gray-300 text-xs text-gray-800 space-y-1">
+                  <p className="font-bold">Roster Removal:</p>
+                  <p>
+                    Removes participant from the active tournament. Historical submission and violation records are preserved in audit history.
+                  </p>
+                </div>
+              )}
+
+              {actionModal.type === 'readd' && (
+                <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-900 space-y-1">
+                  <p className="font-bold">Clean Re-Addition Policy:</p>
+                  <p>
+                    Re-enables the participant for a clean, fresh attempt with a full countdown timer and reset violation strikes. Prior attempts remain archived.
+                  </p>
+                </div>
+              )}
+
+              {actionModal.type === 'delete' && (
+                <div className="p-3.5 rounded-2xl bg-rose-50 border border-rose-300 text-xs text-rose-900 space-y-1">
+                  <p className="font-bold text-rose-700">Permanent Destructive Action:</p>
+                  <p>
+                    Completely deletes the participant account, answers, and session records without leaving broken foreign-key relationships. This cannot be undone.
+                  </p>
+                </div>
+              )}
+
+              {/* Input for reason or notes */}
+              {(actionModal.type === 'terminate' || actionModal.type === 'remove') && (
+                <div>
+                  <label className="block text-xs font-bold text-[#111808] uppercase mb-1">
+                    Administrative Reason (Required)
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Unapproved tab switch violation..."
+                    value={actionModal.reason}
+                    onChange={(e) =>
+                      setActionModal((prev) => (prev ? { ...prev, reason: e.target.value } : null))
+                    }
+                    className="w-full bg-[#FAFAF7] border border-[#E5E0D8] focus:border-[#111808] rounded-xl px-3 py-2 text-xs text-[#111808] outline-none"
+                  />
+                </div>
+              )}
+
+              {(actionModal.type === 'approve_resume' || actionModal.type === 'readd') && (
+                <div>
+                  <label className="block text-xs font-bold text-[#111808] uppercase mb-1">
+                    Chief Proctor Audit Notes
+                  </label>
+                  <textarea
+                    rows={2}
+                    placeholder="Enter audit notes regarding this authorization decision..."
+                    value={actionModal.notes}
+                    onChange={(e) =>
+                      setActionModal((prev) => (prev ? { ...prev, notes: e.target.value } : null))
+                    }
+                    className="w-full bg-[#FAFAF7] border border-[#E5E0D8] focus:border-[#111808] rounded-xl p-3 text-xs text-[#111808] outline-none resize-none"
+                  />
+                </div>
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-[#E5E0D8] flex items-center justify-end gap-3">
+              <button
+                type="button"
+                disabled={actionModal.loading}
+                onClick={() => setActionModal(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#656858] hover:text-[#111808] cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                disabled={actionModal.loading}
+                onClick={executeParticipantAction}
+                className={`px-5 py-2.5 rounded-xl text-xs font-bold shadow transition-colors cursor-pointer flex items-center gap-1.5 ${
+                  actionModal.type === 'approve_resume' || actionModal.type === 'readd'
+                    ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    : actionModal.type === 'delete' || actionModal.type === 'terminate'
+                    ? 'bg-rose-600 hover:bg-rose-700 text-white'
+                    : 'bg-[#111808] hover:bg-[#1f2b12] text-[#FFF0BA]'
+                }`}
+              >
+                {actionModal.loading ? (
+                  <span>Processing...</span>
+                ) : (
+                  <>
+                    {actionModal.type === 'approve_resume' && 'Confirm Resumption'}
+                    {actionModal.type === 'terminate' && 'Confirm Termination'}
+                    {actionModal.type === 'remove' && 'Confirm Removal'}
+                    {actionModal.type === 'readd' && 'Confirm Re-Addition'}
+                    {actionModal.type === 'delete' && 'Delete Participant'}
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* MODAL: ADD / EDIT QUESTION IN CURRICULUM BANK */}
+      {questionModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm overflow-y-auto">
+          <div className="w-full max-w-2xl bg-white border border-[#E5E0D8] rounded-[32px] p-6 sm:p-8 shadow-2xl my-8">
+            <div className="flex items-center justify-between pb-4 border-b border-[#E5E0D8]">
+              <div>
+                <span className="text-[10px] font-mono font-bold uppercase text-[#656858]">
+                  CURRICULUM MANAGEMENT
+                </span>
+                <h3 className="text-base font-bold font-heading text-[#111808]">
+                  {questionModal.mode === 'create'
+                    ? 'Add Question to Competition Bank'
+                    : `Edit Question ${questionModal.data.code || ''}`}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setQuestionModal(null)}
+                className="p-1 rounded-lg text-[#656858] hover:text-[#111808] cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveQuestion} className="space-y-4 mt-5">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+                <div className="sm:col-span-1">
+                  <label className="block text-[11px] font-bold text-[#111808] mb-1">
+                    Round Tier
+                  </label>
+                  <select
+                    value={questionModal.data.roundId}
+                    onChange={(e) => {
+                      const newRoundId = Number(e.target.value);
+                      const defaultPts = newRoundId === 1 ? 1 : newRoundId === 2 ? 2 : 3;
+                      setQuestionModal((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              data: {
+                                ...prev.data,
+                                roundId: newRoundId,
+                                points: defaultPts,
+                              },
+                            }
+                          : null
+                      );
+                    }}
+                    className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl px-3 py-2 text-xs font-semibold text-[#111808] outline-none cursor-pointer"
+                  >
+                    <option value={1}>Round 1 (Easy)</option>
+                    <option value={2}>Round 2 (Medium)</option>
+                    <option value={3}>Round 3 (Difficult)</option>
+                  </select>
+                </div>
+
+                <div className="sm:col-span-1">
+                  <label className="block text-[11px] font-bold text-[#111808] mb-1">
+                    Question Code
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. E9, M11, H11"
+                    value={questionModal.data.code}
+                    onChange={(e) =>
+                      setQuestionModal((prev) =>
+                        prev ? { ...prev, data: { ...prev.data, code: e.target.value } } : null
+                      )
+                    }
+                    className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl px-3 py-2 text-xs font-mono font-bold text-[#111808] outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-1">
+                  <label className="block text-[11px] font-bold text-[#111808] mb-1">
+                    Points / Marks
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={10}
+                    required
+                    value={questionModal.data.points}
+                    onChange={(e) =>
+                      setQuestionModal((prev) =>
+                        prev ? { ...prev, data: { ...prev.data, points: Number(e.target.value) } } : null
+                      )
+                    }
+                    className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl px-3 py-2 text-xs font-mono font-bold text-[#111808] outline-none"
+                  />
+                </div>
+
+                <div className="sm:col-span-1">
+                  <label className="block text-[11px] font-bold text-[#111808] mb-1">
+                    Category
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    placeholder="e.g. Python, SQL"
+                    value={questionModal.data.category}
+                    onChange={(e) =>
+                      setQuestionModal((prev) =>
+                        prev ? { ...prev, data: { ...prev.data, category: e.target.value } } : null
+                      )
+                    }
+                    className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl px-3 py-2 text-xs text-[#111808] outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[#111808] mb-1">
+                  Question Statement / Prompt
+                </label>
+                <textarea
+                  required
+                  rows={3}
+                  placeholder="Enter the complete question statement or code snippet..."
+                  value={questionModal.data.prompt}
+                  onChange={(e) =>
+                    setQuestionModal((prev) =>
+                      prev ? { ...prev, data: { ...prev.data, prompt: e.target.value } } : null
+                    )
+                  }
+                  className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl p-3 text-xs text-[#111808] font-mono outline-none resize-none"
+                />
+              </div>
+
+              {/* 4 Options with Correct Answer Selector */}
+              <div className="space-y-2">
+                <label className="block text-[11px] font-bold text-[#111808]">
+                  Four Answer Options (Select which option is correct key):
+                </label>
+
+                {[0, 1, 2, 3].map((optIdx) => {
+                  const letter = ['A', 'B', 'C', 'D'][optIdx];
+                  const fieldKey = `option${optIdx}` as 'option0' | 'option1' | 'option2' | 'option3';
+                  const isCorrect = questionModal.data.correctOption === optIdx;
+
+                  return (
+                    <div
+                      key={optIdx}
+                      className={`p-2.5 rounded-xl border flex items-center gap-3 transition-colors ${
+                        isCorrect
+                          ? 'bg-emerald-50 border-emerald-300'
+                          : 'bg-[#FAFAF7] border-[#E5E0D8]'
+                      }`}
+                    >
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setQuestionModal((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  data: { ...prev.data, correctOption: optIdx },
+                                }
+                              : null
+                          )
+                        }
+                        className={`w-7 h-7 rounded-lg flex items-center justify-center font-mono text-xs font-bold shrink-0 cursor-pointer transition-colors ${
+                          isCorrect
+                            ? 'bg-emerald-600 text-white shadow-sm'
+                            : 'bg-white text-[#656858] border border-[#E5E0D8] hover:border-[#111808]'
+                        }`}
+                      >
+                        {letter}
+                      </button>
+
+                      <input
+                        type="text"
+                        required
+                        placeholder={`Option ${letter} text...`}
+                        value={questionModal.data[fieldKey]}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setQuestionModal((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  data: { ...prev.data, [fieldKey]: val },
+                                }
+                              : null
+                          );
+                        }}
+                        className="flex-1 bg-white border border-[#E5E0D8] rounded-lg px-3 py-1.5 text-xs text-[#111808] outline-none"
+                      />
+
+                      <label
+                        onClick={() =>
+                          setQuestionModal((prev) =>
+                            prev
+                              ? {
+                                  ...prev,
+                                  data: { ...prev.data, correctOption: optIdx },
+                                }
+                              : null
+                          )
+                        }
+                        className="flex items-center gap-1.5 text-[11px] font-mono text-emerald-800 cursor-pointer shrink-0"
+                      >
+                        <input
+                          type="radio"
+                          name="correctOptionRadio"
+                          checked={isCorrect}
+                          onChange={() => {}}
+                          className="accent-emerald-600"
+                        />
+                        <span className="hidden sm:inline">Correct</span>
+                      </label>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-[#111808] mb-1">
+                  Pedagogical Explanation
+                </label>
+                <textarea
+                  required
+                  rows={2}
+                  placeholder="Explain why this option is correct (shown post-competition)..."
+                  value={questionModal.data.explanation}
+                  onChange={(e) =>
+                    setQuestionModal((prev) =>
+                      prev ? { ...prev, data: { ...prev.data, explanation: e.target.value } } : null
+                    )
+                  }
+                  className="w-full bg-[#FAFAF7] border border-[#E5E0D8] rounded-xl p-3 text-xs text-[#111808] outline-none resize-none"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="isActiveQuestion"
+                  checked={questionModal.data.isActive}
+                  onChange={(e) =>
+                    setQuestionModal((prev) =>
+                      prev ? { ...prev, data: { ...prev.data, isActive: e.target.checked } } : null
+                    )
+                  }
+                  className="w-4 h-4 rounded text-[#111808] accent-[#111808] cursor-pointer"
+                />
+                <label htmlFor="isActiveQuestion" className="text-xs text-[#111808] font-medium cursor-pointer">
+                  Active in competition (available in question rotation)
+                </label>
+              </div>
+
+              <div className="pt-3 border-t border-[#E5E0D8] flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setQuestionModal(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#656858] hover:text-[#111808] cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingQuestion}
+                  className="px-5 py-2.5 rounded-xl bg-[#111808] hover:bg-[#1f2b12] text-[#FFF0BA] text-xs font-mono font-bold shadow cursor-pointer transition-all disabled:opacity-50"
+                >
+                  {savingQuestion
+                    ? 'Saving...'
+                    : questionModal.mode === 'create'
+                    ? 'Create Question'
+                    : 'Save Changes'}
                 </button>
               </div>
             </form>

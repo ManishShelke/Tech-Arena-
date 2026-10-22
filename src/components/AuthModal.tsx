@@ -142,9 +142,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </button>
 
         {/* Modal Header */}
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2.5 rounded-xl bg-[#111808] text-[#FFF0BA]">
-            <Cpu className="w-5 h-5" />
+        <div className="flex items-center gap-3.5 mb-6">
+          <div className="w-12 h-12 rounded-2xl bg-white border border-[#E5E0D8] p-1 flex items-center justify-center shadow-sm overflow-hidden shrink-0">
+            <img
+              src="/assets/aistudio/acd7f777-797e-4ce6-ae26-4077fe5fb474_aeab48d4.png"
+              alt="TECH ARENA Logo"
+              className="w-full h-full object-contain"
+            />
           </div>
           <div>
             <h2 className="text-xl font-bold font-heading text-[#111808] tracking-tight">
@@ -353,7 +357,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 />
               </div>
               <p className="text-[11px] text-[#656858] mt-1.5">
-                Authorized tournament officials only (configured with passkey: <code className="text-[#111808] font-mono font-bold">Matrix2026</code>).
+                Authorized tournament officials only. Rate limiting and IP auditing are enforced.
               </p>
             </div>
 

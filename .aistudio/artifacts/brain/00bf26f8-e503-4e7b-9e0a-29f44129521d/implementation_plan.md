@@ -1,105 +1,123 @@
-# Tech Arena: Unified Retro-Modern Design System Implementation
+# TECH ARENA — Three-Round Technical Competition Architecture & Implementation Plan
 
-A comprehensive implementation plan to unify the public landing experience, participant portal, live competition arena, and public leaderboard under the Colonial White (`#FFF0BA`) and Waterloo Green (`#111808`) design system established in the Admin Console.
+Comprehensive implementation specification for the Tech Arena three-round technical competition system, incorporating the complete 28-question curriculum, sequential qualification gates, individual server-authoritative countdown timers, per-attempt randomized question/option shuffling, and administrative tournament oversight.
 
----
+***
 
-### User Review & Critical Decisions
+## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following key design preferences have been confirmed and will guide the execution:
-> - **Live Arena & Code Environment**: High-focus dark terminal mode with deep Waterloo black-green surface (`#0A0F05` / `#111808`), sharp borders, and warm Colonial White (`#FFF0BA`) accents and monospace code typography.
-> - **Landing Page & Selection Flow**: Editorial retro-grid aesthetic with bold typographic hierarchy, structured geometric panels, zero pill-badge clutter, and unboxed metadata.
+> The following operational choices were confirmed via user clarification and will govern the competition engine:
 
----
+- **Confirmed Decision 1 (Result Disclosure)**: Scores and qualification status (Pass/Fail) are revealed immediately upon round submission. Detailed question-by-question explanations and answer keys remain concealed during the live competition and are revealed only when the tournament concludes or when explicitly authorized by an administrator.
+- **Confirmed Decision 2 (Anti-Cheating Randomization)**: Question order and option display sequences (A, B, C, D) are shuffled uniquely for each participant attempt while strictly maintaining authoritative server-side option mapping so that grading remains 100% accurate.
+- **Confirmed Decision 3 (Qualification Gating)**: Round 1 is unlocked by default for all registered participants. Round 2 unlocks strictly when a participant scores $\ge 60\%$ in Round 1 (5/8 marks). Round 3 unlocks strictly when qualifying in Round 2 ($\ge 12/20$ marks). Administrators can customize qualifying thresholds and manually override locks or authorize retakes.
 
-### 1. Overview & Core Concept
+***
 
-- **What It Delivers**: Transforms the participant-facing Tech Arena views—including the landing hero, team registration modal, student authentication, round selection, live competition coding arena, anti-cheat proctoring indicators, and public leaderboard—into a unified, retro-modern, high-contrast tournament environment.
-- **Target Audience**: Collegiate developers, tournament contestants, team leads, and public spectators viewing real-time tournament standings.
-- **Key Value**: Provides a cohesive, tournament-grade user experience that matches the precision and aesthetic quality of the administrative dashboard while maintaining zero-latency responsiveness and robust anti-cheat protections.
+## 1. Overview & Core Concept
 
----
+Tech Arena is an elite, proctored inter-collegiate competitive examination platform engineered for Class 11–12, BCA, and Engineering students. The platform challenges students across three escalating tiers:
 
-### 2. User Experience & Visual Design
+1. **Round 1 — EASY (Rapid Qualifier)**: 8 questions, 10-minute countdown, 1 mark each (8 total marks). Focuses on computer fundamentals, Python basics, binary arithmetic, HTML document structure, and basic SQL.
+2. **Round 2 — MEDIUM (Algorithmic Engineering & Bug Hunt)**: 10 questions, 20-minute countdown, 2 marks each (20 total marks). Focuses on nested loop execution, string slicing, stack LIFO behavior, $O(\log n)$ binary search, SQL filtering, OOP method overriding, Round Robin scheduling, TCP, and Boolean logic.
+3. **Round 3 — VERY DIFFICULT (Live Arena Clash)**: 10 questions, 30-minute countdown, 3 marks each (30 total marks). Focuses on complex loop accumulation, factorial recursion, loop doubling complexity, stack traces, SQL `GROUP BY ... HAVING`, Dijkstra's shortest path, bitwise operations (`13 & 10`), Python default mutable argument gotchas, Coffman deadlock conditions, and two-pointer array optimization.
 
-#### A. Key User Flows
-1. **Landing & Team Verification**:
-   - Participants land on an editorial hero section featuring clean typography, live tournament metadata, and round specifications.
-   - Team registration / login modal with structured geometric input fields, monospace labels, and high-contrast Colonial White action triggers.
-2. **Participant Arena Dashboard**:
-   - Overview card showing active registration status, college affiliation, round qualification, and anti-cheat guidelines.
-   - Tiered round selection (Easy / Intermediate / Hard) with clear time limits, point ceilings, and question counts presented in structured grid panels.
-3. **Live Competition Arena (QuizInterface)**:
-   - Deep dark terminal environment (`#0B1006` / `#111808`) with a high-contrast top bar displaying countdown clock in tabular monospace numerals (`JetBrains Mono`).
-   - Anti-cheat proctor status bar with subtle border transitions (warning on tab switches, remote attempt termination if flagged).
-   - Question navigator with geometric status indicators (Answered, Flagged, Unvisited).
-   - Code execution / answer input area with monospaced editor, clear submit/next controls, and instant local state autosaving.
-4. **Public Leaderboard**:
-   - High-contrast podium displaying top 3 teams with gold, silver, and bronze geometric accents.
-   - Clean tabular rankings with college filtering, search query input, and instant freeze status notification banner.
+Total competition marks: **58 marks across 28 questions**.
 
-#### B. Visual Identity & Design System Tokens
-- **Dominant Canvas**: Neutral off-white (`#FBFBF7`) for dashboards and landing page; Deep Forest Dark (`#0B1006`) for the active code terminal.
-- **Structural Surfaces**: Waterloo Green (`#111808`), soft bone borders (`#E5E0D8` on light, `#1F2B14` on dark).
-- **Accent Budget**: Colonial White (`#FFF0BA`) reserved strictly for primary buttons, active state chips, and score highlights.
-- **Typography**:
-  - Display / Headers: High-contrast neo-grotesque display headers (`Space Grotesk` / `Plus Jakarta Sans`).
-  - Data / Telemetry: `JetBrains Mono` with `font-variant-numeric: tabular-nums` for timers, question numbers, scores, and code blocks.
-  - Body: Crisp legible sans (`Plus Jakarta Sans`).
-- **Anti-Slop Discipline**:
-  - No colored pill badges or capsule chips; all metadata rendered as clean unboxed text separated by `·` or `/`.
-  - No fake compiler comment headers (`// 01_CORE`).
-  - No generic purple gradients or pulsing decorative dots.
+***
 
----
+## 2. User Experience & Visual Design
 
-### 3. Key Product Decisions & Trade-Offs
+Following the established **Tech Arena** design constitution:
+- **Canvas & Palette**: 60% neutral canvas (`#FAFAF7` background in light mode, `#0B1006` in terminal mode), 30% structural surfaces with hairline borders (`#E5E0D8` and `#1F2B14`), 10% high-intent focal accents (Colonial Gold `#FFF0BA` and Forest Black `#111808`).
+- **Typography & Formatting**: Headings set in Space Grotesk/Plus Jakarta Sans with balanced wrapping (`text-wrap: balance`), monospace numbers (`font-mono tabular-nums`), and zero static pill enclosure clutter.
+- **Progressive Disclosure Flow**:
+  - **Hub View**: 3 round cards displaying qualification badge, lock status, duration, strike limits, and previous scores.
+  - **Runner View**: Full-screen assessment container with round badge, persistent countdown timer, question palette drawer with answered/unanswered/marked status counters, clear multiple-choice radio cards with keyboard navigation (1-4 or A-D), "Mark for Review" toggle, and a submission modal with unanswered questions warning.
+  - **Result View**: Clean scorecard presenting earned points, qualification verdict (e.g. `Qualified for Round 2: 7 / 8 Marks (87.5%)`), and next step directions.
 
-- **Decision 1: Dark Mode vs. Light Mode in Live Arena**
-  - *Chosen Approach*: The main dashboard, registration, and leaderboard share the light Colonial White + Waterloo Green editorial look; the live coding arena switches to a deep Waterloo dark terminal mode (`#0B1006`).
-  - *Why*: Reduces contestant eye fatigue during intense 30–60 minute algorithmic coding rounds and maximizes code syntax contrast.
-  - *Alternatives Considered*: Keeping pure light mode across all views (rejected due to glaring brightness in code editor).
+***
 
-- **Decision 2: Anti-Cheat Proctoring UX**
-  - *Chosen Approach*: Unobtrusive inline status strip with sharp geometric warning dialogs when focus is lost or warnings are logged.
-  - *Why*: Maintains high tournament integrity without obstructing the code editing workspace.
+## 3. Key Product Decisions & Trade-Offs
 
----
+- **Server-Authoritative Evaluation**:
+  - *Chosen Approach*: Questions sent to participants strip `correctOption` and `explanation`. Options and questions are shuffled per attempt using a deterministic or stored per-attempt permutation array on the server.
+  - *Why*: Completely blocks browser inspection tools (`F12`, network tab, DOM scrapers) from extracting answer keys.
+- **Deterministic Server Timers**:
+  - *Chosen Approach*: `serverDeadline = startTime + durationMinutes`. When a participant refreshes or reconnects, `remainingSeconds = max(0, serverDeadline - now)`. If suspended via tab switch, time is frozen at `pausedAt` and adjusted forward on admin approval.
+  - *Why*: Client clock manipulation, tab reloading, or disabling local JavaScript cannot grant extra time.
+- **Qualification Enforcing Middleware**:
+  - *Chosen Approach*: `POST /api/attempts/start` validates eligibility on the server: Round 2 requires Round 1 score $\ge$ Round 1 threshold (default 60%); Round 3 requires Round 2 qualification. Direct API tampering returns `403 Forbidden`.
 
-### 4. Technical Architecture & Component Hierarchy
+***
+
+## 4. Technical Architecture & Data Strategy
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Tech Arena (App.tsx)                   │
-│   - Retro Grid Background (.admin-grid-bg)                  │
-│   - Top Navigation (Brand Wordmark · Links · Auth Action)   │
-└──────────────┬──────────────────────────────┬───────────────┘
-               │                              │
-     ┌─────────┴─────────┐          ┌─────────┴─────────┐
-     │  Participant View │          │   Public Views    │
-     └─────────┬─────────┘          └─────────┬─────────┘
-               │                              │
-   ┌───────────┴───────────┐         ┌────────┴────────┐
-   │ ParticipantDashboard  │         │   Leaderboard   │
-   │ - Roster Card         │         │ - Podium (1,2,3)│
-   │ - Round Selection     │         │ - Ranked Table  │
-   │ - Rules & Status      │         │ - Search/Filter │
-   └───────────┬───────────┘         └─────────────────┘
-               │
-   ┌───────────┴───────────┐
-   │    QuizInterface      │
-   │ (Dark Terminal Theme) │
-   │ - Header Timer (Mono) │
-   │ - Question Navigator  │
-   │ - Code Editor/Answer  │
-   │ - Autosave & Submit   │
-   └───────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                        TECH ARENA CLIENT                               │
+│  ┌───────────────────────┐  ┌─────────────────┐  ┌──────────────────┐  │
+│  │ QualifierTerminal.tsx │  │  AdminPanel.tsx │  │  Leaderboard.tsx │  │
+│  │ (Question Runner,     │  │ (Question CRUD, │  │ (Live Standings, │  │
+│  │  Palette, Timer Bar)  │  │  Overrides, CSV)│  │  Scores)         │  │
+│  └───────────┬───────────┘  └────────┬────────┘  └─────────┬────────┘  │
+└──────────────┼───────────────────────┼─────────────────────┼───────────┘
+               │ JSON / Bearer JWT     │ Admin Token         │ Public
+               ▼                       ▼                     ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        EXPRESS SERVER (PORT 3000)                      │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │ Routes: /api/rounds, /api/attempts/start, /api/attempts/:id/sync │  │
+│  │         /api/attempts/:id/answer, /api/attempts/:id/submit       │  │
+│  │ Admin:  /api/admin/rounds, /api/admin/questions (CRUD)          │  │
+│  │         /api/admin/participants/:id/unlock, /api/admin/retake    │  │
+│  └──────────────────────────────────┬───────────────────────────────┘  │
+└─────────────────────────────────────┼──────────────────────────────────┘
+                                      ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                        PERSISTENT DATA STORE                           │
+│  ┌──────────────┐  ┌─────────────────┐  ┌───────────────────────────┐  │
+│  │ rounds       │  │ questions       │  │ quiz_attempts             │  │
+│  │ (id, num,    │  │ (id, roundId,   │  │ (id, userId, roundId,     │  │
+│  │  qualifyPct, │  │  code, prompt,  │  │  status, serverDeadline,  │  │
+│  │  duration)   │  │  options, key,  │  │  score, shuffledOrder,    │  │
+│  │              │  │  explanation)   │  │  violationsCount)         │  │
+│  └──────────────┘  └─────────────────┘  └───────────────────────────┘  │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Component & State Mapping:
-- **`App.tsx`**: Unified navigation header, landing hero, registration & login modals with Colonial White inputs and high-contrast buttons.
-- **`ParticipantDashboard.tsx`**: Round selection cards with geometric badges, active countdown, and difficulty tiers.
-- **`QuizInterface.tsx`**: Live coding terminal theme with dark green chassis (`#0B1006`), Colonial White accents, tabular timer, and anti-cheat tracking.
-- **`Leaderboard.tsx`**: Clean table layout, podium cards, search bar, and freeze state banner.
-- **`index.css`**: Global design tokens and utilities for background patterns and monospace alignments.
+### Data Model Additions & Enhancements
+
+1. **`rounds` Table**:
+   - `qualifyingPercentage`: integer (default 60).
+   - `durationMinutes`: 10 for R1, 20 for R2, 30 for R3.
+   - `maxScore`: 8 for R1, 20 for R2, 30 for R3.
+2. **`questions` Table**:
+   - `code`: text (e.g. 'E1', 'M5', 'H10').
+   - `explanation`: text (detailed rationale for review mode).
+   - `points`: 1, 2, or 3 marks.
+   - `options`: jsonb (array of 4 options).
+   - `correctOption`: integer (0 to 3 index).
+3. **`quiz_attempts` Table**:
+   - `isQualified`: boolean.
+   - `qualificationOverridden`: boolean (admin override flag).
+   - `shuffledQuestions`: jsonb (stores the randomized question & option mapping for the attempt).
+4. **Seed Database (`src/db/seed.ts`)**:
+   - Seeds all 28 exact questions from Section 7 with statements, options, answer indices, and explanations.
+
+### Implementation Milestones
+
+1. **Schema & Seed Migration**:
+   - Update `src/db/schema.ts` with `code`, `explanation`, `qualifyingPercentage`.
+   - Implement `syncQuestionBank()` in `src/db/seed.ts` containing the verified 28-question dataset with answer keys.
+2. **Authoritative Backend Logic (`server.ts` & `src/routes/admin.ts`)**:
+   - Enforce sequential unlocking in `/api/attempts/start`.
+   - Calculate qualification on submission in `/api/attempts/:id/submit`.
+   - Support admin question editor, round duration/qualifying % config, retake approvals, and CSV export.
+3. **Frontend Question Runner (`src/components/QualifierTerminal.tsx`)**:
+   - Add question palette navigation grid (1..N) with status markers (Answered, Current, Marked for Review).
+   - Add confirmation modal showing total answered / unanswered count before final submission.
+   - Add post-submission qualification banner with direct action to proceed to the next round if qualified.
+4. **Admin Dashboard Controls (`src/components/AdminPanel.tsx`)**:
+   - Display questions manager with round switcher, question edit modal, answer key updates, and retake authorizations.

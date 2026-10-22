@@ -55,8 +55,12 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateHom
       {/* Top Bar with Tech Arena Branding */}
       <header className="max-w-6xl w-full mx-auto flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-2xl bg-[#111808] flex items-center justify-center text-[#FFF0BA] shadow-md">
-            <Cpu className="w-5 h-5" />
+          <div className="h-10 w-10 rounded-2xl bg-white border border-[#E5E0D8] p-1 flex items-center justify-center shadow-md overflow-hidden">
+            <img
+              src="/assets/aistudio/acd7f777-797e-4ce6-ae26-4077fe5fb474_aeab48d4.png"
+              alt="TECH ARENA Logo"
+              className="w-full h-full object-contain"
+            />
           </div>
           <div>
             <span className="font-heading font-bold text-lg text-[#111808] tracking-wider">TECH ARENA</span>
@@ -78,10 +82,14 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateHom
       {/* Main Login Card */}
       <main className="max-w-md w-full mx-auto my-12">
         <div className="bg-white border border-[#E5E0D8] rounded-[32px] p-8 sm:p-10 shadow-xl shadow-[#111808]/5 relative overflow-hidden">
-          {/* Top Badge */}
+          {/* Top Badge with Logo */}
           <div className="flex justify-center mb-6">
-            <div className="w-16 h-16 rounded-3xl bg-[#111808] flex items-center justify-center text-[#FFF0BA] shadow-lg shadow-[#111808]/20">
-              <Lock className="w-7 h-7 stroke-[2.2]" />
+            <div className="w-20 h-20 rounded-3xl bg-white border border-[#E5E0D8] p-2 flex items-center justify-center shadow-lg shadow-[#111808]/5 overflow-hidden">
+              <img
+                src="/assets/aistudio/acd7f777-797e-4ce6-ae26-4077fe5fb474_aeab48d4.png"
+                alt="TECH ARENA"
+                className="w-full h-full object-contain"
+              />
             </div>
           </div>
 
@@ -143,8 +151,8 @@ export const AdminLogin: React.FC<AdminLoginProps> = ({ onSuccess, onNavigateHom
                 </button>
               </div>
               <p className="text-[11px] text-[#656858] mt-1.5 flex items-center justify-between">
-                <span>Initial Secret Configured</span>
-                <span className="font-mono font-bold text-[#111808]">Matrix2026</span>
+                <span>Secure Server Authentication</span>
+                <span className="font-mono text-[#111808]">Audited & Rate-Limited</span>
               </p>
             </div>
 

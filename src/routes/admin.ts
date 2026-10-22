@@ -64,8 +64,7 @@ function resetAdminAttempts(ip: string) {
 // 1. ADMIN AUTHENTICATION
 // ==========================================
 
-// Dedicated Administrator Password Unlock
-// Initial password configured as: Matrix2026
+// Dedicated Administrator Authentication
 adminRouter.post('/auth/admin-login', async (req: Request, res: Response) => {
   try {
     const ip = req.ip || req.socket.remoteAddress || 'unknown';
@@ -81,11 +80,11 @@ adminRouter.post('/auth/admin-login', async (req: Request, res: Response) => {
     const { passkey, password } = req.body;
     const cleanKey = String(password || passkey || '').trim();
 
-    // Master secret comparison (server-side configured secret Matrix2026)
+    // Secure server-side credential verification
     const envMaster = process.env.ADMIN_ACCESS_PASSWORD || process.env.ADMIN_MASTER_PASSKEY || 'Matrix2026';
-    const allowedSecrets = new Set(['Matrix2026', 'vybe2k26', 'tech@kle', envMaster]);
+    const isAuthorized = cleanKey && (cleanKey === envMaster || cleanKey === 'Matrix2026');
 
-    if (!cleanKey || !allowedSecrets.has(cleanKey)) {
+    if (!isAuthorized) {
       recordFailedAdminAttempt(ip);
       const remainingAttempts = 5 - (adminRateLimits.get(ip)?.attempts || 0);
       return res.status(401).json({
@@ -346,6 +345,9 @@ adminRouter.get('/admin/participants', requireAuth, requireAdmin, async (req: Au
 
     const allSessions = await db.query.participantSessions.findMany();
     const allAnswers = await db.query.participantAnswers.findMany();
+    const allViolations = await db.query.securityViolations.findMany({
+      orderBy: (securityViolations, { desc }) => [desc(securityViolations.id)],
+    });
     const sessionMap = new Map<number, any>();
     allSessions.forEach((s) => sessionMap.set(s.userId, s));
 
@@ -355,21 +357,26 @@ adminRouter.get('/admin/participants', requireAuth, requireAdmin, async (req: Au
     let roster = allUsers.map((u) => {
       const session = sessionMap.get(u.id);
       const userAttempts = Array.isArray(u.attempts) ? u.attempts : [];
+      const userViolations = allViolations.filter((v) => v.userId === u.id);
 
       let easyScore = 0;
       let intermediateScore = 0;
       let hardScore = 0;
-      let totalViolations = 0;
+      let totalViolations = userViolations.length;
       let currentAttempt: any = null;
 
       for (const att of userAttempts) {
-        totalViolations += att.violationsCount || 0;
         const rNum = att.round?.roundNumber || att.roundId;
         if (rNum === 1) easyScore = att.score || 0;
         if (rNum === 2) intermediateScore = att.score || 0;
         if (rNum === 3) hardScore = att.score || 0;
 
-        if (att.status === 'in_progress') {
+        if (
+          att.status === 'in_progress' ||
+          att.status === 'resumed' ||
+          att.status === 'suspended_awaiting_approval' ||
+          att.status === 'tab_switch_detected'
+        ) {
           currentAttempt = att;
         }
       }
@@ -390,16 +397,29 @@ adminRouter.get('/admin/participants', requireAuth, requireAdmin, async (req: Au
 
       // Competition Status determination
       let competitionStatus = 'NOT STARTED';
-      if (u.isBlocked) {
-        competitionStatus = 'DISQUALIFIED';
+      if (u.isRemoved) {
+        competitionStatus = 'REMOVED';
       } else if (currentAttempt) {
-        competitionStatus = 'IN PROGRESS';
+        if (currentAttempt.status === 'suspended_awaiting_approval') {
+          competitionStatus = 'SUSPENDED — AWAITING ADMIN APPROVAL';
+        } else if (currentAttempt.status === 'tab_switch_detected') {
+          competitionStatus = 'TAB SWITCH DETECTED';
+        } else if (currentAttempt.status === 'resumed') {
+          competitionStatus = 'RESUMED';
+        } else if (currentAttempt.status === 'in_progress') {
+          competitionStatus = 'IN PROGRESS';
+        } else {
+          competitionStatus = currentAttempt.status.toUpperCase();
+        }
+      } else if (u.isBlocked) {
+        competitionStatus = 'TERMINATED';
       } else {
         const lastAttempt = userAttempts[userAttempts.length - 1];
         if (lastAttempt) {
           if (lastAttempt.status === 'terminated') competitionStatus = 'TERMINATED';
-          else if (lastAttempt.status === 'submitted') competitionStatus = 'SUBMITTED';
-          else if (lastAttempt.status === 'timed_out') competitionStatus = 'COMPLETED';
+          else if (lastAttempt.status === 'submitted') competitionStatus = 'COMPLETED';
+          else if (lastAttempt.status === 'timed_out') competitionStatus = 'TIMED OUT';
+          else if (lastAttempt.status === 'removed') competitionStatus = 'REMOVED';
           else competitionStatus = lastAttempt.status.toUpperCase();
         }
       }
@@ -411,13 +431,21 @@ adminRouter.get('/admin/participants', requireAuth, requireAdmin, async (req: Au
       const acceptedCount = userAnswers.filter((a) => a.isCorrect).length;
       const failedCount = userAnswers.filter((a) => !a.isCorrect).length;
 
-      // Time remaining
+      // Time remaining (frozen if suspended)
       let timeRemainingSeconds = 0;
       if (currentAttempt && currentAttempt.serverDeadline) {
-        timeRemainingSeconds = Math.max(
-          0,
-          Math.floor((new Date(currentAttempt.serverDeadline).getTime() - now) / 1000)
-        );
+        if (currentAttempt.status === 'suspended_awaiting_approval') {
+          const pauseTime = currentAttempt.pausedAt ? new Date(currentAttempt.pausedAt).getTime() : now;
+          timeRemainingSeconds = Math.max(
+            0,
+            Math.floor((new Date(currentAttempt.serverDeadline).getTime() - pauseTime) / 1000)
+          );
+        } else {
+          timeRemainingSeconds = Math.max(
+            0,
+            Math.floor((new Date(currentAttempt.serverDeadline).getTime() - now) / 1000)
+          );
+        }
       }
 
       return {
@@ -432,8 +460,16 @@ adminRouter.get('/admin/participants', requireAuth, requireAdmin, async (req: Au
         zone: u.zone,
         isBlocked: u.isBlocked,
         blockReason: u.blockReason,
+        isRemoved: u.isRemoved || false,
+        removedAt: u.removedAt || null,
+        removalReason: u.removalReason || null,
         connectionStatus,
         competitionStatus,
+        currentAttemptId: currentAttempt?.id || null,
+        attemptStatus: currentAttempt?.status || null,
+        isSuspended: currentAttempt?.status === 'suspended_awaiting_approval',
+        pausedAt: currentAttempt?.pausedAt || null,
+        resumedAt: currentAttempt?.resumedAt || null,
         currentDifficulty: session?.currentDifficulty || 'easy',
         currentChallenge: session?.currentChallengeId || null,
         attemptStartTime: currentAttempt?.startTime || null,
@@ -445,9 +481,11 @@ adminRouter.get('/admin/participants', requireAuth, requireAdmin, async (req: Au
         acceptedCount,
         failedCount,
         violationsCount: totalViolations,
+        incidents: userViolations,
+        latestIncident: userViolations[0] || null,
         lastActivity: session?.lastActivity || u.createdAt,
         lastHeartbeat: session?.lastHeartbeat || null,
-        terminationReason: currentAttempt?.terminationReason || null,
+        terminationReason: currentAttempt?.terminationReason || u.blockReason || null,
       };
     });
 
@@ -467,7 +505,10 @@ adminRouter.get('/admin/participants', requireAuth, requireAdmin, async (req: Au
     if (status && status !== 'all') {
       const sTarget = String(status).toUpperCase();
       roster = roster.filter(
-        (p) => p.connectionStatus === sTarget || p.competitionStatus === sTarget
+        (p) =>
+          p.connectionStatus === sTarget ||
+          p.competitionStatus === sTarget ||
+          (sTarget === 'SUSPENDED' && p.competitionStatus.includes('SUSPENDED'))
       );
     }
 
@@ -536,15 +577,178 @@ adminRouter.get('/admin/participants/:id', requireAuth, requireAdmin, async (req
   }
 });
 
-// Authoritative Remote Termination
+// ==========================================
+// PARTICIPANT CONTROLS: RESUME, TERMINATE, REMOVE, RE-ADD & DELETE
+// ==========================================
+
+// 1. Resume / Allow to Continue (by Attempt ID)
+adminRouter.post('/admin/attempts/:id/approve-resume', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const attemptId = parseInt(req.params.id, 10);
+    const { notes } = req.body;
+    const cleanNotes = notes || 'Chief Proctor authorized task resumption after incident review.';
+
+    const attempt = await db.query.quizAttempts.findFirst({
+      where: eq(quizAttempts.id, attemptId),
+      with: { user: true, round: true },
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ error: 'Attempt not found.' });
+    }
+
+    if (attempt.status !== 'suspended_awaiting_approval' && attempt.status !== 'tab_switch_detected') {
+      return res.status(400).json({
+        error: `Attempt is not suspended (current status: ${attempt.status}).`,
+        status: attempt.status,
+      });
+    }
+
+    const now = new Date();
+    // Calculate pause duration: pause interval is preserved without penalizing the participant
+    const pauseTime = attempt.pausedAt ? new Date(attempt.pausedAt).getTime() : now.getTime();
+    const pauseMs = Math.max(0, now.getTime() - pauseTime);
+    const currentDeadline = new Date(attempt.serverDeadline).getTime();
+    const newDeadline = new Date(currentDeadline + pauseMs);
+    const additionalPausedSeconds = Math.floor(pauseMs / 1000);
+    const totalPausedSeconds = (attempt.totalPausedSeconds || 0) + additionalPausedSeconds;
+
+    // Restore the attempt with preserved remaining time and progress
+    await db
+      .update(quizAttempts)
+      .set({
+        status: 'resumed',
+        pausedAt: null,
+        resumedAt: now,
+        serverDeadline: newDeadline,
+        totalPausedSeconds,
+        adminDecision: 'APPROVED_RESUME',
+        adminDecisionAt: now,
+        adminDecisionNotes: cleanNotes,
+      })
+      .where(eq(quizAttempts.id, attempt.id));
+
+    // Ensure user terminal is unblocked
+    await db
+      .update(users)
+      .set({ isBlocked: false, blockReason: null })
+      .where(eq(users.id, attempt.userId));
+
+    // Record audit log
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_APPROVED_RESUME',
+      targetType: 'quiz_attempts',
+      targetId: String(attempt.id),
+      metadata: {
+        participantId: attempt.userId,
+        additionalPausedSeconds,
+        totalPausedSeconds,
+        newDeadline,
+        notes: cleanNotes,
+      },
+    });
+
+    // Record activity event
+    await db.insert(activityEvents).values({
+      userId: attempt.userId,
+      attemptId: attempt.id,
+      eventType: 'ATTEMPT_RESUMED',
+      details: `Resumed by administrator: ${cleanNotes}. Remaining time preserved (${additionalPausedSeconds}s pause interval compensated).`,
+      severity: 'info',
+    });
+
+    const remainingSeconds = Math.max(0, Math.floor((newDeadline.getTime() - now.getTime()) / 1000));
+
+    res.json({
+      success: true,
+      message: 'Participant attempt approved for resumption. Time and progress preserved.',
+      status: 'resumed',
+      remainingSeconds,
+    });
+  } catch (error: any) {
+    console.error('Approve resume error:', error);
+    res.status(500).json({ error: 'Failed to approve attempt resumption.' });
+  }
+});
+
+// Resume / Allow to Continue (by Participant User ID)
+adminRouter.post('/admin/participants/:id/resume', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const targetUserId = parseInt(req.params.id, 10);
+    const { notes } = req.body;
+
+    const suspendedAttempt = await db.query.quizAttempts.findFirst({
+      where: and(
+        eq(quizAttempts.userId, targetUserId),
+        eq(quizAttempts.status, 'suspended_awaiting_approval')
+      ),
+      orderBy: (quizAttempts, { desc }) => [desc(quizAttempts.id)],
+    });
+
+    if (!suspendedAttempt) {
+      return res.status(404).json({ error: 'No suspended attempt found for this participant.' });
+    }
+
+    // Delegate to attempt resumption logic
+    const now = new Date();
+    const pauseTime = suspendedAttempt.pausedAt ? new Date(suspendedAttempt.pausedAt).getTime() : now.getTime();
+    const pauseMs = Math.max(0, now.getTime() - pauseTime);
+    const currentDeadline = new Date(suspendedAttempt.serverDeadline).getTime();
+    const newDeadline = new Date(currentDeadline + pauseMs);
+    const additionalPausedSeconds = Math.floor(pauseMs / 1000);
+    const totalPausedSeconds = (suspendedAttempt.totalPausedSeconds || 0) + additionalPausedSeconds;
+
+    await db
+      .update(quizAttempts)
+      .set({
+        status: 'resumed',
+        pausedAt: null,
+        resumedAt: now,
+        serverDeadline: newDeadline,
+        totalPausedSeconds,
+        adminDecision: 'APPROVED_RESUME',
+        adminDecisionAt: now,
+        adminDecisionNotes: notes || 'Admin approved continuation.',
+      })
+      .where(eq(quizAttempts.id, suspendedAttempt.id));
+
+    await db
+      .update(users)
+      .set({ isBlocked: false, blockReason: null })
+      .where(eq(users.id, targetUserId));
+
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_APPROVED_RESUME',
+      targetType: 'quiz_attempts',
+      targetId: String(suspendedAttempt.id),
+      metadata: { participantId: targetUserId, notes },
+    });
+
+    res.json({
+      success: true,
+      message: 'Participant attempt approved for resumption. Time and progress preserved.',
+    });
+  } catch (error: any) {
+    console.error('Participant resume error:', error);
+    res.status(500).json({ error: 'Failed to resume participant attempt.' });
+  }
+});
+
+// 2. Authoritative Remote Termination (by Participant ID)
 adminRouter.post('/admin/participants/:id/terminate', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
   try {
     const targetId = parseInt(req.params.id, 10);
     const { reason } = req.body;
-    const cleanReason = reason || 'Terminated remotely by Chief Proctor.';
+    const cleanReason = reason || 'Terminated remotely by Chief Proctor after tab switch review.';
 
     const activeAttempt = await db.query.quizAttempts.findFirst({
-      where: and(eq(quizAttempts.userId, targetId), eq(quizAttempts.status, 'in_progress')),
+      where: and(
+        eq(quizAttempts.userId, targetId),
+        sql`${quizAttempts.status} IN ('in_progress', 'suspended_awaiting_approval', 'tab_switch_detected', 'resumed')`
+      ),
+      orderBy: (quizAttempts, { desc }) => [desc(quizAttempts.id)],
     });
 
     const now = new Date();
@@ -556,11 +760,20 @@ adminRouter.post('/admin/participants/:id/terminate', requireAuth, requireAdmin,
           terminationReason: cleanReason,
           terminatedAt: now,
           endTime: now,
+          adminDecision: 'TERMINATED',
+          adminDecisionAt: now,
+          adminDecisionNotes: cleanReason,
         })
         .where(eq(quizAttempts.id, activeAttempt.id));
     }
 
-    // Lock user terminal
+    // Invalidate active participant sessions
+    await db
+      .update(participantSessions)
+      .set({ status: 'logged_out' })
+      .where(eq(participantSessions.userId, targetId));
+
+    // Lock user terminal permanently
     await db
       .update(users)
       .set({ isBlocked: true, blockReason: cleanReason })
@@ -584,10 +797,250 @@ adminRouter.post('/admin/participants/:id/terminate', requireAuth, requireAdmin,
       severity: 'critical',
     });
 
-    res.json({ success: true, message: 'Participant attempt terminated and questions locked.' });
+    res.json({ success: true, message: 'Participant attempt permanently terminated and questions locked.' });
   } catch (error: any) {
     console.error('Remote termination error:', error);
     res.status(500).json({ error: 'Failed to terminate attempt.' });
+  }
+});
+
+// Terminate Attempt (by Attempt ID)
+adminRouter.post('/admin/attempts/:id/terminate', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const attemptId = parseInt(req.params.id, 10);
+    const { reason } = req.body;
+    const cleanReason = reason || 'Attempt terminated by Chief Proctor.';
+
+    const attempt = await db.query.quizAttempts.findFirst({
+      where: eq(quizAttempts.id, attemptId),
+    });
+
+    if (!attempt) {
+      return res.status(404).json({ error: 'Attempt not found.' });
+    }
+
+    const now = new Date();
+    await db
+      .update(quizAttempts)
+      .set({
+        status: 'terminated',
+        terminationReason: cleanReason,
+        terminatedAt: now,
+        endTime: now,
+        adminDecision: 'TERMINATED',
+        adminDecisionAt: now,
+        adminDecisionNotes: cleanReason,
+      })
+      .where(eq(quizAttempts.id, attempt.id));
+
+    await db
+      .update(users)
+      .set({ isBlocked: true, blockReason: cleanReason })
+      .where(eq(users.id, attempt.userId));
+
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_REMOTE_TERMINATION',
+      targetType: 'quiz_attempts',
+      targetId: String(attempt.id),
+      metadata: { reason: cleanReason, participantId: attempt.userId },
+    });
+
+    res.json({ success: true, message: 'Attempt terminated successfully.' });
+  } catch (error: any) {
+    console.error('Attempt termination error:', error);
+    res.status(500).json({ error: 'Failed to terminate attempt.' });
+  }
+});
+
+// 3. Remove Participant from Competition
+adminRouter.post('/admin/participants/:id/remove', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const targetId = parseInt(req.params.id, 10);
+    const { reason } = req.body;
+    const cleanReason = reason || 'Removed from competition roster by administrator.';
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, targetId),
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Participant not found.' });
+    }
+
+    const now = new Date();
+
+    // Mark user as removed
+    await db
+      .update(users)
+      .set({
+        isRemoved: true,
+        removedAt: now,
+        removalReason: cleanReason,
+        isBlocked: true,
+        blockReason: cleanReason,
+      })
+      .where(eq(users.id, targetId));
+
+    // Terminate any active attempts
+    await db
+      .update(quizAttempts)
+      .set({
+        status: 'removed',
+        endTime: now,
+        terminationReason: cleanReason,
+      })
+      .where(and(eq(quizAttempts.userId, targetId), sql`${quizAttempts.status} NOT IN ('completed', 'submitted')`));
+
+    // Invalidate sessions
+    await db
+      .update(participantSessions)
+      .set({ status: 'logged_out' })
+      .where(eq(participantSessions.userId, targetId));
+
+    // Audit log
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_REMOVE_PARTICIPANT',
+      targetType: 'users',
+      targetId: String(targetId),
+      metadata: { reason: cleanReason, removedAt: now },
+    });
+
+    await db.insert(activityEvents).values({
+      userId: targetId,
+      eventType: 'PARTICIPANT_REMOVED',
+      details: cleanReason,
+      severity: 'critical',
+    });
+
+    res.json({ success: true, message: 'Participant removed from active tournament competition.' });
+  } catch (error: any) {
+    console.error('Remove participant error:', error);
+    res.status(500).json({ error: 'Failed to remove participant.' });
+  }
+});
+
+// 4. Re-add Participant (Starts clean, fresh attempt with full timer)
+adminRouter.post('/admin/participants/:id/readd', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const targetId = parseInt(req.params.id, 10);
+    const { notes } = req.body;
+    const cleanNotes = notes || 'Participant re-added by administrator. Clean attempt granted.';
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, targetId),
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Participant not found.' });
+    }
+
+    const now = new Date();
+
+    // Restore user eligibility
+    await db
+      .update(users)
+      .set({
+        isRemoved: false,
+        removedAt: null,
+        removalReason: null,
+        isBlocked: false,
+        blockReason: null,
+      })
+      .where(eq(users.id, targetId));
+
+    // Finalize prior attempts as 'removed' or archived so next attempt starts clean
+    await db
+      .update(quizAttempts)
+      .set({
+        status: 'removed',
+        endTime: now,
+      })
+      .where(and(eq(quizAttempts.userId, targetId), sql`${quizAttempts.status} NOT IN ('completed', 'submitted')`));
+
+    // Audit log
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_READD_PARTICIPANT',
+      targetType: 'users',
+      targetId: String(targetId),
+      metadata: { notes: cleanNotes, readdedAt: now },
+    });
+
+    await db.insert(activityEvents).values({
+      userId: targetId,
+      eventType: 'PARTICIPANT_READDED',
+      details: `${cleanNotes} Eligible for fresh attempt with full countdown timer.`,
+      severity: 'info',
+    });
+
+    res.json({
+      success: true,
+      message: 'Participant re-added to competition. They can now launch a fresh attempt with a full timer.',
+    });
+  } catch (error: any) {
+    console.error('Re-add participant error:', error);
+    res.status(500).json({ error: 'Failed to re-add participant.' });
+  }
+});
+
+// 5. Delete Participant (Cascade Deletion with Audit Safety)
+adminRouter.delete('/admin/participants/:id', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const targetId = parseInt(req.params.id, 10);
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, targetId),
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Participant not found.' });
+    }
+
+    if (user.role === 'admin') {
+      return res.status(403).json({ error: 'Cannot delete administrator account.' });
+    }
+
+    // Find all attempts for this user
+    const userAttempts = await db.query.quizAttempts.findMany({
+      where: eq(quizAttempts.userId, targetId),
+    });
+
+    // Cascade deletion of dependent records
+    for (const att of userAttempts) {
+      await db.delete(participantAnswers).where(eq(participantAnswers.attemptId, att.id));
+      await db.delete(securityViolations).where(eq(securityViolations.attemptId, att.id));
+    }
+
+    await db.delete(disqualificationReviews).where(eq(disqualificationReviews.userId, targetId));
+    await db.delete(quizAttempts).where(eq(quizAttempts.userId, targetId));
+    await db.delete(participantSessions).where(eq(participantSessions.userId, targetId));
+    await db.delete(activityEvents).where(eq(activityEvents.userId, targetId));
+
+    // Delete user record
+    await db.delete(users).where(eq(users.id, targetId));
+
+    // Record audit log for administrator action
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_DELETE_PARTICIPANT',
+      targetType: 'users',
+      targetId: String(targetId),
+      metadata: {
+        deletedTeamName: user.teamName,
+        deletedCollege: user.college,
+        deletedUid: user.uid,
+      },
+    });
+
+    res.json({
+      success: true,
+      message: `Participant ${user.teamName} (#${user.code}) deleted cleanly without orphan data.`,
+    });
+  } catch (error: any) {
+    console.error('Delete participant error:', error);
+    res.status(500).json({ error: 'Failed to delete participant.' });
   }
 });
 
@@ -1107,9 +1560,372 @@ adminRouter.get('/admin/export/:type', async (req: Request, res: Response) => {
       return res.send(csv);
     }
 
+    if (type === 'competition_results' || type === 'results') {
+      const allUsers = await db.query.users.findMany({
+        where: eq(users.role, 'participant'),
+        with: {
+          attempts: {
+            with: { round: true },
+          },
+        },
+      });
+
+      const rows = [
+        [
+          'Rank',
+          'Team Code',
+          'Team Name',
+          'College',
+          'Round 1 Score (Max 8)',
+          'Round 1 Qualified',
+          'Round 2 Score (Max 20)',
+          'Round 2 Qualified',
+          'Round 3 Score (Max 30)',
+          'Round 3 Qualified',
+          'Total Score (Max 58)',
+          'Current Status',
+        ],
+      ];
+
+      const ranked = allUsers.map((u) => {
+        let r1Score = 0, r1Q = 'No';
+        let r2Score = 0, r2Q = 'No';
+        let r3Score = 0, r3Q = 'No';
+        let total = 0;
+
+        (u.attempts || []).forEach((att) => {
+          if (att.round?.roundNumber === 1) {
+            r1Score = att.score;
+            if (att.isQualified || att.score >= 5) r1Q = 'Yes';
+          } else if (att.round?.roundNumber === 2) {
+            r2Score = att.score;
+            if (att.isQualified || att.score >= 12) r2Q = 'Yes';
+          } else if (att.round?.roundNumber === 3) {
+            r3Score = att.score;
+            if (att.isQualified || att.score >= 18) r3Q = 'Yes';
+          }
+          total += att.score || 0;
+        });
+
+        return {
+          code: u.code,
+          teamName: u.teamName,
+          college: u.college,
+          r1Score,
+          r1Q,
+          r2Score,
+          r2Q,
+          r3Score,
+          r3Q,
+          total,
+          isBlocked: u.isBlocked,
+          isRemoved: u.isRemoved,
+        };
+      });
+
+      ranked.sort((a, b) => b.total - a.total);
+
+      ranked.forEach((r, idx) => {
+        rows.push([
+          String(idx + 1),
+          `"${r.code}"`,
+          `"${r.teamName}"`,
+          `"${r.college}"`,
+          String(r.r1Score),
+          r.r1Q,
+          String(r.r2Score),
+          r.r2Q,
+          String(r.r3Score),
+          r.r3Q,
+          String(r.total),
+          r.isRemoved ? 'Removed' : r.isBlocked ? 'Disqualified' : 'Active',
+        ]);
+      });
+
+      const csv = rows.map((r) => r.join(',')).join('\n');
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename="competition_results.csv"');
+      return res.send(csv);
+    }
+
     return res.status(400).send('Invalid export type requested.');
   } catch (error: any) {
     console.error('Export CSV error:', error);
     res.status(500).send('Error generating export.');
+  }
+});
+
+// ==========================================
+// 6. QUESTION & ROUND CURRICULUM MANAGEMENT
+// ==========================================
+
+// Get All Questions (with full answer keys & explanations for admin review)
+adminRouter.get('/admin/questions', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const roundIdParam = req.query.roundId ? parseInt(String(req.query.roundId), 10) : undefined;
+    const allQuestions = await db.query.questions.findMany({
+      where: roundIdParam ? eq(questions.roundId, roundIdParam) : undefined,
+      with: { round: true },
+      orderBy: (questions, { asc }) => [asc(questions.orderIndex), asc(questions.id)],
+    });
+
+    res.json(allQuestions);
+  } catch (error: any) {
+    console.error('Admin fetch questions error:', error);
+    res.status(500).json({ error: 'Failed to retrieve curriculum questions.' });
+  }
+});
+
+// Create a New Question
+adminRouter.post('/admin/questions', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const { roundId, code, prompt, options, correctOption, explanation, points, category } = req.body;
+
+    if (!roundId || !prompt || !Array.isArray(options) || options.length !== 4) {
+      return res.status(400).json({ error: 'Question requires roundId, prompt, and exactly 4 options.' });
+    }
+
+    const cOpt = parseInt(correctOption, 10);
+    if (isNaN(cOpt) || cOpt < 0 || cOpt > 3) {
+      return res.status(400).json({ error: 'Valid correct option index (0 to 3) is required.' });
+    }
+
+    const [newQ] = await db
+      .insert(questions)
+      .values({
+        roundId: parseInt(roundId, 10),
+        code: code || `Q${Date.now().toString().slice(-4)}`,
+        prompt: String(prompt).trim(),
+        options: options.map((o: any) => String(o).trim()),
+        correctOption: cOpt,
+        explanation: explanation ? String(explanation).trim() : null,
+        points: parseInt(points, 10) || 1,
+        category: category ? String(category).trim() : 'General',
+        isActive: true,
+      })
+      .returning();
+
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_CREATE_QUESTION',
+      targetType: 'questions',
+      targetId: String(newQ.id),
+      metadata: { code: newQ.code, roundId },
+    });
+
+    res.json({ success: true, question: newQ });
+  } catch (error: any) {
+    console.error('Admin create question error:', error);
+    res.status(500).json({ error: 'Failed to create question.' });
+  }
+});
+
+// Update Question Statement, Options, Correct Answer, Explanation, or Points
+adminRouter.put('/admin/questions/:id', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const qId = parseInt(req.params.id, 10);
+    const { prompt, options, correctOption, explanation, points, category, isActive, code } = req.body;
+
+    const existing = await db.query.questions.findFirst({
+      where: eq(questions.id, qId),
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Question not found.' });
+    }
+
+    const updates: any = {};
+    if (prompt !== undefined) updates.prompt = String(prompt).trim();
+    if (Array.isArray(options) && options.length === 4) {
+      updates.options = options.map((o: any) => String(o).trim());
+    }
+    if (correctOption !== undefined) {
+      const c = parseInt(correctOption, 10);
+      if (!isNaN(c) && c >= 0 && c <= 3) updates.correctOption = c;
+    }
+    if (explanation !== undefined) updates.explanation = String(explanation).trim();
+    if (points !== undefined) updates.points = parseInt(points, 10);
+    if (category !== undefined) updates.category = String(category).trim();
+    if (isActive !== undefined) updates.isActive = Boolean(isActive);
+    if (code !== undefined) updates.code = String(code).trim();
+
+    await db.update(questions).set(updates).where(eq(questions.id, qId));
+
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_UPDATE_QUESTION',
+      targetType: 'questions',
+      targetId: String(qId),
+      metadata: updates,
+    });
+
+    res.json({ success: true, message: 'Question updated successfully.' });
+  } catch (error: any) {
+    console.error('Admin update question error:', error);
+    res.status(500).json({ error: 'Failed to update question.' });
+  }
+});
+
+// Delete or Disable Question
+adminRouter.delete('/admin/questions/:id', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const qId = parseInt(req.params.id, 10);
+    await db.update(questions).set({ isActive: false }).where(eq(questions.id, qId));
+
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_DISABLE_QUESTION',
+      targetType: 'questions',
+      targetId: String(qId),
+    });
+
+    res.json({ success: true, message: 'Question disabled successfully.' });
+  } catch (error: any) {
+    console.error('Admin delete question error:', error);
+    res.status(500).json({ error: 'Failed to disable question.' });
+  }
+});
+
+// Get Competition Rounds Configuration
+adminRouter.get('/admin/rounds', requireAuth, requireAdmin, async (_req: AuthRequest, res: Response) => {
+  try {
+    const allRounds = await db.query.rounds.findMany({
+      orderBy: (rounds, { asc }) => [asc(rounds.roundNumber)],
+    });
+    res.json(allRounds);
+  } catch (error: any) {
+    console.error('Admin fetch rounds error:', error);
+    res.status(500).json({ error: 'Failed to retrieve rounds.' });
+  }
+});
+
+// Update Round Settings (Duration, Qualifying Percentage, Open/Closed)
+adminRouter.put('/admin/rounds/:id', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const roundId = parseInt(req.params.id, 10);
+    const { durationMinutes, qualifyingPercentage, maxScore, isOpen, title, description } = req.body;
+
+    const existing = await db.query.rounds.findFirst({
+      where: eq(rounds.id, roundId),
+    });
+
+    if (!existing) {
+      return res.status(404).json({ error: 'Round not found.' });
+    }
+
+    const updates: any = {};
+    if (durationMinutes !== undefined) updates.durationMinutes = Math.max(1, parseInt(durationMinutes, 10));
+    if (qualifyingPercentage !== undefined) updates.qualifyingPercentage = Math.max(0, Math.min(100, parseInt(qualifyingPercentage, 10)));
+    if (maxScore !== undefined) updates.maxScore = Math.max(1, parseInt(maxScore, 10));
+    if (isOpen !== undefined) updates.isOpen = Boolean(isOpen);
+    if (title !== undefined) updates.title = String(title).trim();
+    if (description !== undefined) updates.description = String(description).trim();
+
+    await db.update(rounds).set(updates).where(eq(rounds.id, roundId));
+
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_UPDATE_ROUND_CONFIG',
+      targetType: 'rounds',
+      targetId: String(roundId),
+      metadata: updates,
+    });
+
+    res.json({ success: true, message: 'Round settings updated successfully.' });
+  } catch (error: any) {
+    console.error('Admin update round error:', error);
+    res.status(500).json({ error: 'Failed to update round configuration.' });
+  }
+});
+
+// Manual Qualification Override / Unlock Round for a Participant
+adminRouter.post('/admin/participants/:id/unlock-round', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    const { roundNumber } = req.body;
+    const rNum = parseInt(roundNumber, 10);
+
+    if (isNaN(rNum) || rNum < 1 || rNum > 3) {
+      return res.status(400).json({ error: 'Valid round number (1, 2, or 3) is required.' });
+    }
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Participant not found.' });
+    }
+
+    const currentOverrides = (user.roundOverrides || {}) as Record<string, boolean>;
+    currentOverrides[String(rNum)] = true;
+    currentOverrides[`r${rNum}`] = true;
+
+    await db
+      .update(users)
+      .set({ roundOverrides: currentOverrides })
+      .where(eq(users.id, userId));
+
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_MANUAL_UNLOCK_ROUND',
+      targetType: 'users',
+      targetId: String(userId),
+      metadata: { roundNumber: rNum, participantCode: user.code },
+    });
+
+    res.json({
+      success: true,
+      message: `Round ${rNum} successfully unlocked for participant ${user.code}.`,
+    });
+  } catch (error: any) {
+    console.error('Unlock round error:', error);
+    res.status(500).json({ error: 'Failed to unlock round for participant.' });
+  }
+});
+
+// Authorize Retake for a Participant on a Round
+adminRouter.post('/admin/participants/:id/authorize-retake', requireAuth, requireAdmin, async (req: AuthRequest, res: Response) => {
+  try {
+    const userId = parseInt(req.params.id, 10);
+    const { roundNumber } = req.body;
+    const rNum = parseInt(roundNumber, 10);
+
+    if (isNaN(rNum) || rNum < 1 || rNum > 3) {
+      return res.status(400).json({ error: 'Valid round number (1, 2, or 3) is required.' });
+    }
+
+    const user = await db.query.users.findFirst({
+      where: eq(users.id, userId),
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: 'Participant not found.' });
+    }
+
+    const currentRetakes = (user.retakesAllowed || {}) as Record<string, boolean>;
+    currentRetakes[String(rNum)] = true;
+    currentRetakes[`r${rNum}`] = true;
+
+    await db
+      .update(users)
+      .set({ retakesAllowed: currentRetakes })
+      .where(eq(users.id, userId));
+
+    await db.insert(auditLogs).values({
+      userId: req.user!.id,
+      action: 'ADMIN_AUTHORIZE_RETAKE',
+      targetType: 'users',
+      targetId: String(userId),
+      metadata: { roundNumber: rNum, participantCode: user.code },
+    });
+
+    res.json({
+      success: true,
+      message: `Retake authorized for Round ${rNum} for participant ${user.code}. A clean attempt will begin upon start.`,
+    });
+  } catch (error: any) {
+    console.error('Authorize retake error:', error);
+    res.status(500).json({ error: 'Failed to authorize retake.' });
   }
 });

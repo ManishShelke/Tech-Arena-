@@ -20,8 +20,22 @@ export interface UserProfile {
   r1Completed?: boolean;
   r2Completed?: boolean;
   r3Completed?: boolean;
+  isQualifiedR1?: boolean;
+  isQualifiedR2?: boolean;
+  isQualifiedR3?: boolean;
+  canAccessR1?: boolean;
+  canAccessR2?: boolean;
+  canAccessR3?: boolean;
+  r1MinScore?: number;
+  r2MinScore?: number;
+  r3MinScore?: number;
+  roundOverrides?: Record<string, boolean>;
+  retakesAllowed?: Record<string, boolean>;
   violations?: number;
-  maxViolations?: number;
+  isRemoved?: boolean;
+  removalReason?: string | null;
+  competitionStatus?: string;
+  currentAttemptId?: number | null;
 }
 
 export interface RoundInfo {
@@ -30,7 +44,10 @@ export interface RoundInfo {
   title: string;
   description: string;
   durationMinutes: number;
+  qualifyingPercentage: number;
+  maxScore: number;
   maxViolations: number;
+  difficulty?: 'easy' | 'medium' | 'hard';
   isOpen: boolean;
   isPublished: boolean;
   orderIndex: number;
@@ -38,25 +55,60 @@ export interface RoundInfo {
 
 export interface QuestionData {
   id: number;
+  code?: string;
   prompt: string;
   type: 'mcq' | 'code';
   options?: string[];
+  correctOption?: number;
+  explanation?: string;
   codeStarter?: string;
   points: number;
   orderIndex: number;
   category: string;
+  isActive?: boolean;
+}
+
+export interface TabSwitchIncident {
+  id: number;
+  attemptId: number;
+  userId: number;
+  roundId: number;
+  violationType: string;
+  details: string;
+  serverTimestamp: string;
 }
 
 export interface AttemptSession {
   attemptId: number;
-  status: 'in_progress' | 'submitted' | 'timed_out' | 'disqualified' | 'terminated';
+  status:
+    | 'not_started'
+    | 'in_progress'
+    | 'tab_switch_detected'
+    | 'suspended_awaiting_approval'
+    | 'resumed'
+    | 'completed'
+    | 'submitted'
+    | 'timed_out'
+    | 'disqualified'
+    | 'terminated'
+    | 'removed';
   serverDeadline: string;
   remainingSeconds: number;
   durationMinutes: number;
+  roundId?: number;
+  roundNumber?: number;
   violationsCount: number;
   maxViolations: number;
   questions: QuestionData[];
   savedAnswers: Record<number, { selectedOption?: number; submittedCode?: string }>;
+  isSuspended?: boolean;
+  pausedAt?: string | null;
+  totalPausedSeconds?: number;
+  resumedAt?: string | null;
+  suspensionReason?: string | null;
+  adminDecision?: string | null;
+  adminDecisionNotes?: string | null;
+  incidents?: TabSwitchIncident[];
 }
 
 export interface LeaderboardEntry {

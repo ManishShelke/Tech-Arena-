@@ -217,8 +217,12 @@ export const App: React.FC = () => {
       <footer className="border-t border-[#E5E0D8] bg-[#FAFAF7] py-6 px-4 text-xs text-[#656858]">
         <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2.5">
-            <div className="h-6 w-6 rounded-md bg-[#111808] text-[#FFF0BA] flex items-center justify-center">
-              <Cpu className="w-3.5 h-3.5" />
+            <div className="h-7 w-7 rounded-lg bg-white border border-[#E5E0D8] p-0.5 flex items-center justify-center shadow-xs overflow-hidden">
+              <img
+                src="/assets/aistudio/acd7f777-797e-4ce6-ae26-4077fe5fb474_aeab48d4.png"
+                alt="Tech Arena"
+                className="w-full h-full object-contain"
+              />
             </div>
             <span className="font-heading font-bold text-[#111808]">TECH ARENA 2026</span>
             <span>— Inter-College Technical Championship</span>

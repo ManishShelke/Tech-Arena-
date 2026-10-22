@@ -296,6 +296,21 @@ function createMockDb(): DBType {
         },
       }),
     }),
+    delete: (tableObj: any) => ({
+      where: async (whereClause: any) => {
+        const tableName = getTableName(tableObj);
+        const list = getStoreTable(tableName);
+        const predicate = extractFieldAndVal(whereClause);
+        let deletedCount = 0;
+        for (let i = list.length - 1; i >= 0; i--) {
+          if (!predicate || predicate(list[i])) {
+            list.splice(i, 1);
+            deletedCount++;
+          }
+        }
+        return { rowCount: deletedCount };
+      },
+    }),
     $count: async (tableObj: any, whereClause?: any) => {
       const tableName = getTableName(tableObj);
       const list = getStoreTable(tableName);
