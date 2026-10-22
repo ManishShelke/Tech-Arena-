@@ -15,7 +15,7 @@ export const App: React.FC = () => {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [activeTab, setActiveTab] = useState<'arena' | 'leaderboard'>('arena');
   const [isAuthOpen, setIsAuthOpen] = useState(false);
-  const [authMode, setAuthMode] = useState<'register' | 'code' | 'admin'>('register');
+  const [authMode, setAuthMode] = useState<'register' | 'admin'>('register');
   const [isAppealOpen, setIsAppealOpen] = useState(false);
   const [currentPath, setCurrentPath] = useState<string>(() => window.location.pathname || '/');
 

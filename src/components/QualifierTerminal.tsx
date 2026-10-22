@@ -16,6 +16,8 @@ import {
   X,
   FileText,
   Lock,
+  Unlock,
+  RefreshCw,
   Bookmark,
   Award,
   HelpCircle,
@@ -1233,11 +1235,11 @@ export const QualifierTerminal: React.FC<QualifierTerminalProps> = ({
             </div>
 
             {/* Warnings */}
-            {markedForReview.size > 0 && (
+            {Object.values(markedForReview).filter(Boolean).length > 0 && (
               <div className="p-3 rounded-2xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
                 <Bookmark className="w-4 h-4 text-amber-700 shrink-0 mt-0.5 fill-current" />
                 <span>
-                  You have <strong className="font-mono">{markedForReview.size}</strong> question{markedForReview.size > 1 ? 's' : ''} still marked for review.
+                  You have <strong className="font-mono">{Object.values(markedForReview).filter(Boolean).length}</strong> question{Object.values(markedForReview).filter(Boolean).length > 1 ? 's' : ''} still marked for review.
                 </span>
               </div>
             )}

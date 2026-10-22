@@ -6,7 +6,7 @@ interface AuthModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (token: string, user: UserProfile) => void;
-  initialMode?: 'register' | 'code' | 'admin';
+  initialMode?: 'register' | 'admin';
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -15,7 +15,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onSuccess,
   initialMode = 'register',
 }) => {
-  const [mode, setMode] = useState<'register' | 'code' | 'admin'>(initialMode);
+  const [mode, setMode] = useState<'register' | 'admin'>(initialMode);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -25,7 +25,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [leadMember, setLeadMember] = useState('');
   const [secondMember, setSecondMember] = useState('');
   const [zone, setZone] = useState('South Zone');
-  const [teamCode, setTeamCode] = useState('');
   const [adminPasskey, setAdminPasskey] = useState('');
 
   if (!isOpen) return null;
@@ -63,38 +62,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       onClose();
     } catch (err: any) {
       setError(err.message || 'Connection failure to tournament server.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCodeLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    const cleanCode = teamCode.trim().toUpperCase();
-    if (!cleanCode) {
-      setError('Please enter your 4-digit Team Terminal Code (e.g. #TA-4091).');
-      return;
-    }
-
-    setLoading(true);
-    try {
-      const formattedCode = cleanCode.startsWith('#') ? cleanCode : `#${cleanCode}`;
-      const token = `ta_team_${formattedCode}`;
-
-      const res = await fetch('/api/auth/me', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        throw new Error(data.error || 'Team Terminal Code not recognized.');
-      }
-
-      onSuccess(token, data.user);
-      onClose();
-    } catch (err: any) {
-      setError(err.message || 'Verification failed. Please check your team code.');
     } finally {
       setLoading(false);
     }
@@ -159,7 +126,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         </div>
 
         {/* Navigation Mode Tabs */}
-        <div className="grid grid-cols-3 gap-1 bg-[#F0EEE6] p-1 rounded-xl mb-6 border border-[#E5E0D8] text-xs font-medium">
+        <div className="grid grid-cols-2 gap-1 bg-[#F0EEE6] p-1 rounded-xl mb-6 border border-[#E5E0D8] text-xs font-medium">
           <button
             type="button"
             onClick={() => {
@@ -173,20 +140,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             }`}
           >
             Register Team
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setMode('code');
-              setError(null);
-            }}
-            className={`py-2 rounded-lg transition-all cursor-pointer ${
-              mode === 'code'
-                ? 'bg-[#111808] text-[#FFF0BA] font-semibold shadow-sm'
-                : 'text-[#656858] hover:text-[#111808]'
-            }`}
-          >
-            Team Code
           </button>
           <button
             type="button"
@@ -307,39 +260,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           </form>
         )}
 
-        {/* Form 2: Team Code Login */}
-        {mode === 'code' && (
-          <form onSubmit={handleCodeLogin} className="space-y-4">
-            <div>
-              <label className="block text-xs font-semibold text-[#111808] uppercase tracking-wider mb-1.5 font-mono">
-                Enter Team Code
-              </label>
-              <div className="relative">
-                <Terminal className="absolute left-3.5 top-3.5 w-4 h-4 text-[#8C9080]" />
-                <input
-                  type="text"
-                  placeholder="#TA-4091"
-                  value={teamCode}
-                  onChange={(e) => setTeamCode(e.target.value)}
-                  className="w-full bg-[#FAFAF7] border border-[#E5E0D8] focus:border-[#111808] rounded-xl pl-10 pr-3 py-3 text-base font-mono text-[#111808] placeholder-[#8C9080] outline-none tracking-widest uppercase transition-colors"
-                />
-              </div>
-              <p className="text-[11px] text-[#656858] mt-1.5">
-                Enter the assigned 4-digit code provided during registration to resume your assessment session.
-              </p>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-3 rounded-xl bg-[#111808] hover:bg-[#1f2b0f] text-[#FFF0BA] font-bold text-xs font-mono tracking-wider shadow-sm disabled:opacity-60 transition-all cursor-pointer"
-            >
-              {loading ? 'Verifying Terminal...' : 'Authenticate Terminal'}
-            </button>
-          </form>
-        )}
-
-        {/* Form 3: Chief Proctor Admin Passkey */}
+        {/* Form 2: Chief Proctor Admin Passkey */}
         {mode === 'admin' && (
           <form onSubmit={handleAdminLogin} className="space-y-4">
             <div>
