@@ -139,7 +139,27 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
       }
 
       if (!participant) {
-        return res.status(401).json({ error: 'Terminal session expired or team not found.' });
+        if (!isUsingPersistentDb()) {
+          // Re-create participant in mock DB from verified HMAC cryptographic token
+          const [restored] = await db
+            .insert(users)
+            .values({
+              uid: `team_${verified.userId}`,
+              email: `${verified.code.toLowerCase().replace(/[^a-z0-9]/g, '_')}@techarena.edu`,
+              role: 'participant',
+              name: `Team ${verified.code}`,
+              college: 'Tech Arena Campus',
+              teamName: `Team ${verified.code}`,
+              teamMembers: ['Participant 1'],
+              code: verified.code,
+              zone: 'South Zone',
+              isBlocked: false,
+            })
+            .returning();
+          participant = restored;
+        } else {
+          return res.status(401).json({ error: 'Terminal session expired or team not found.' });
+        }
       }
 
       if (participant.isRemoved) {

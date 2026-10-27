@@ -31,8 +31,20 @@ const PORT = 3000;
 
 app.use(express.json());
 
-// Normalize request URLs if a serverless rewrite stripped the /api prefix
+// Normalize request URLs if running in Vercel Serverless environment
 app.use((req: Request, _res: Response, next) => {
+  // If Vercel rewrote the URL to /api/index.js, restore the original pathname from headers
+  const matchedPath = (req.headers['x-matched-path'] || req.headers['x-original-url']) as string | undefined;
+  if (matchedPath && matchedPath.startsWith('/api')) {
+    // Preserve query string if any
+    const queryIndex = req.url.indexOf('?');
+    const query = queryIndex !== -1 ? req.url.substring(queryIndex) : '';
+    req.url = `${matchedPath}${query}`;
+  } else if ((req.url.startsWith('/api/index.js') || req.url.startsWith('/api/index')) && matchedPath) {
+    req.url = matchedPath;
+  }
+
+  // Ensure /api prefix is present if a rewrite stripped it
   if (
     !req.url.startsWith('/api') &&
     (req.url.startsWith('/auth/') ||
