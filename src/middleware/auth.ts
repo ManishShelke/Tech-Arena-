@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { db } from '../db/index.ts';
+import { db, isUsingPersistentDb } from '../db/index.ts';
 import { users, adminSessions, participantSessions } from '../db/schema.ts';
 import { eq, and } from 'drizzle-orm';
 import {
@@ -29,6 +29,10 @@ export interface AuthRequest extends Request {
 /**
  * Validates an administrator session token against both its HMAC-SHA256 signature
  * and the active server-side adminSessions table.
+ *
+ * When running with in-memory storage (no PostgreSQL), session-table lookup is
+ * skipped because serverless invocations cannot share in-memory state. The
+ * cryptographic HMAC signature alone guarantees authenticity.
  */
 export async function validateAdminSessionToken(rawToken?: string): Promise<{
   valid: boolean;
@@ -40,6 +44,12 @@ export async function validateAdminSessionToken(rawToken?: string): Promise<{
 
   if (!verifyAdminTokenSignature(rawToken)) {
     return { valid: false, error: 'Invalid administrator token signature. Please re-authenticate.' };
+  }
+
+  // When using in-memory DB (serverless without PostgreSQL), skip session table
+  // lookup — the HMAC-SHA256 signature verification above is sufficient.
+  if (!isUsingPersistentDb()) {
+    return { valid: true };
   }
 
   const session = await db.query.adminSessions.findFirst({

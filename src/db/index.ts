@@ -414,6 +414,7 @@ function createMockDb(): DBType {
 }
 
 let dbInstance: DBType = createMockDb();
+let _isUsingPersistentDb = false;
 
 // Attempt real postgres if configured via DATABASE_URL / POSTGRES_URL (Vercel, Neon, Supabase) or SQL_HOST
 const connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
@@ -454,6 +455,7 @@ if (connectionString || (process.env.SQL_HOST && process.env.SQL_USER)) {
       } else {
         console.log('[TECH ARENA DB] Successfully connected to PostgreSQL instance.');
         dbInstance = drizzle(pool, { schema });
+        _isUsingPersistentDb = true;
       }
     });
   } catch (err) {
@@ -466,3 +468,8 @@ export const db: DBType = new Proxy({}, {
     return (dbInstance as any)[prop];
   },
 });
+
+/** True when connected to a real PostgreSQL instance; false when using in-memory store. */
+export function isUsingPersistentDb(): boolean {
+  return _isUsingPersistentDb;
+}
