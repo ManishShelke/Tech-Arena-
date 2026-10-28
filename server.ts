@@ -3,7 +3,7 @@ import express, { Request, Response } from 'express';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-import { db } from './src/db/index.ts';
+import { db, ensureDatabaseReady } from './src/db/index.ts';
 import {
   users,
   events,
@@ -66,10 +66,11 @@ app.use((req: Request, _res: Response, next) => {
 let seedPromise: Promise<void> | null = null;
 export function ensureDatabaseSeeded(): Promise<void> {
   if (!seedPromise) {
-    seedPromise = seedTournamentDatabase()
+    seedPromise = ensureDatabaseReady()
+      .then(() => seedTournamentDatabase())
       .then(() => syncRound2Questions())
       .catch((err) => {
-        console.error('Error during initial database seed check:', err);
+        console.error('Error during initial database initialization/seed check:', err);
       });
   }
   return seedPromise;

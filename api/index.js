@@ -6,9 +6,10 @@ var __export = (target, all) => {
 
 // server.ts
 import express from "express";
-import * as dotenv from "dotenv";
+import * as dotenv2 from "dotenv";
 
 // src/db/index.ts
+import * as dotenv from "dotenv";
 import { drizzle } from "drizzle-orm/node-postgres";
 import pg from "pg";
 
@@ -304,6 +305,7 @@ var disqualificationReviewsRelations = relations(disqualificationReviews, ({ one
 }));
 
 // src/db/index.ts
+dotenv.config();
 var { Pool } = pg;
 var InMemoryStore = class {
   constructor() {
@@ -680,44 +682,262 @@ function createMockDb() {
     }
   };
 }
+async function initDatabaseSchema(targetPool) {
+  const ddl = `
+    CREATE TABLE IF NOT EXISTS users (
+      id SERIAL PRIMARY KEY,
+      uid TEXT NOT NULL UNIQUE,
+      email TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'participant',
+      name TEXT NOT NULL,
+      college TEXT NOT NULL,
+      team_name TEXT NOT NULL,
+      team_members JSONB NOT NULL,
+      code TEXT NOT NULL UNIQUE,
+      zone TEXT NOT NULL DEFAULT 'South Zone',
+      is_blocked BOOLEAN NOT NULL DEFAULT false,
+      block_reason TEXT,
+      is_removed BOOLEAN NOT NULL DEFAULT false,
+      removed_at TIMESTAMP,
+      removal_reason TEXT,
+      round_overrides JSONB,
+      retakes_allowed JSONB,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS admin_sessions (
+      id SERIAL PRIMARY KEY,
+      token TEXT NOT NULL UNIQUE,
+      admin_id INTEGER REFERENCES users(id),
+      ip TEXT,
+      user_agent TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMP NOT NULL,
+      is_active BOOLEAN NOT NULL DEFAULT true
+    );
+
+    CREATE TABLE IF NOT EXISTS participant_sessions (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      status TEXT NOT NULL DEFAULT 'online',
+      current_difficulty TEXT DEFAULT 'easy',
+      current_challenge_id INTEGER,
+      last_heartbeat TIMESTAMP NOT NULL DEFAULT NOW(),
+      last_activity TIMESTAMP NOT NULL DEFAULT NOW(),
+      ip_address TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS events (
+      id SERIAL PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      banner_url TEXT,
+      start_date TIMESTAMP,
+      end_date TIMESTAMP,
+      is_active BOOLEAN NOT NULL DEFAULT true
+    );
+
+    CREATE TABLE IF NOT EXISTS rounds (
+      id SERIAL PRIMARY KEY,
+      round_number INTEGER NOT NULL UNIQUE,
+      difficulty TEXT NOT NULL DEFAULT 'easy',
+      title TEXT NOT NULL,
+      description TEXT NOT NULL,
+      duration_minutes INTEGER NOT NULL DEFAULT 10,
+      qualifying_percentage INTEGER NOT NULL DEFAULT 60,
+      max_score INTEGER NOT NULL DEFAULT 8,
+      max_violations INTEGER NOT NULL DEFAULT 2,
+      is_open BOOLEAN NOT NULL DEFAULT true,
+      is_published BOOLEAN NOT NULL DEFAULT true,
+      order_index INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS questions (
+      id SERIAL PRIMARY KEY,
+      round_id INTEGER NOT NULL REFERENCES rounds(id),
+      code TEXT,
+      prompt TEXT NOT NULL,
+      type TEXT NOT NULL DEFAULT 'mcq',
+      options JSONB,
+      correct_option INTEGER,
+      explanation TEXT,
+      code_starter TEXT,
+      points INTEGER NOT NULL DEFAULT 1,
+      order_index INTEGER NOT NULL DEFAULT 1,
+      category TEXT NOT NULL DEFAULT 'General',
+      is_active BOOLEAN NOT NULL DEFAULT true
+    );
+
+    CREATE TABLE IF NOT EXISTS quiz_attempts (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      round_id INTEGER NOT NULL REFERENCES rounds(id),
+      status TEXT NOT NULL DEFAULT 'in_progress',
+      start_time TIMESTAMP NOT NULL DEFAULT NOW(),
+      server_deadline TIMESTAMP NOT NULL,
+      end_time TIMESTAMP,
+      score INTEGER NOT NULL DEFAULT 0,
+      is_qualified BOOLEAN NOT NULL DEFAULT false,
+      qualification_overridden BOOLEAN NOT NULL DEFAULT false,
+      shuffled_questions JSONB,
+      total_questions INTEGER NOT NULL DEFAULT 0,
+      answers_count INTEGER NOT NULL DEFAULT 0,
+      violations_count INTEGER NOT NULL DEFAULT 0,
+      is_disqualified BOOLEAN NOT NULL DEFAULT false,
+      disqualification_reason TEXT,
+      termination_reason TEXT,
+      terminated_at TIMESTAMP,
+      paused_at TIMESTAMP,
+      total_paused_seconds INTEGER NOT NULL DEFAULT 0,
+      resumed_at TIMESTAMP,
+      admin_decision TEXT,
+      admin_decision_at TIMESTAMP,
+      admin_decision_notes TEXT,
+      last_incident_at TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS participant_answers (
+      id SERIAL PRIMARY KEY,
+      attempt_id INTEGER NOT NULL REFERENCES quiz_attempts(id),
+      question_id INTEGER NOT NULL REFERENCES questions(id),
+      selected_option INTEGER,
+      submitted_code TEXT,
+      is_correct BOOLEAN NOT NULL DEFAULT false,
+      points_earned INTEGER NOT NULL DEFAULT 0,
+      submitted_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      attempt_number INTEGER NOT NULL DEFAULT 1,
+      rejection_reason TEXT,
+      manually_adjusted BOOLEAN NOT NULL DEFAULT false,
+      adjusted_by TEXT,
+      adjusted_reason TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS activity_events (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      attempt_id INTEGER,
+      event_type TEXT NOT NULL,
+      difficulty_level TEXT,
+      challenge_id INTEGER,
+      details TEXT NOT NULL,
+      severity TEXT NOT NULL DEFAULT 'info',
+      timestamp TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS security_violations (
+      id SERIAL PRIMARY KEY,
+      attempt_id INTEGER NOT NULL REFERENCES quiz_attempts(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      round_id INTEGER NOT NULL REFERENCES rounds(id),
+      violation_type TEXT NOT NULL,
+      details TEXT NOT NULL,
+      server_timestamp TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS disqualification_reviews (
+      id SERIAL PRIMARY KEY,
+      attempt_id INTEGER NOT NULL REFERENCES quiz_attempts(id),
+      user_id INTEGER NOT NULL REFERENCES users(id),
+      appeal_reason TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      reviewer_notes TEXT,
+      reviewed_by TEXT,
+      reviewed_at TIMESTAMP,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS competition_settings (
+      id SERIAL PRIMARY KEY,
+      competition_status TEXT NOT NULL DEFAULT 'active',
+      registration_open BOOLEAN NOT NULL DEFAULT true,
+      fullscreen_enforcement BOOLEAN NOT NULL DEFAULT true,
+      strict_focus_enforcement BOOLEAN NOT NULL DEFAULT true,
+      heartbeat_interval_sec INTEGER NOT NULL DEFAULT 10,
+      heartbeat_stale_threshold_sec INTEGER NOT NULL DEFAULT 30,
+      leaderboard_frozen BOOLEAN NOT NULL DEFAULT false,
+      published_final BOOLEAN NOT NULL DEFAULT false,
+      updated_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id SERIAL PRIMARY KEY,
+      user_id INTEGER REFERENCES users(id),
+      action TEXT NOT NULL,
+      target_type TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      metadata JSONB,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_users_code ON users(code);
+    CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+    CREATE INDEX IF NOT EXISTS idx_participant_sessions_user ON participant_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_quiz_attempts_user_round ON quiz_attempts(user_id, round_id);
+    CREATE INDEX IF NOT EXISTS idx_participant_answers_attempt ON participant_answers(attempt_id);
+    CREATE INDEX IF NOT EXISTS idx_security_violations_attempt ON security_violations(attempt_id);
+    CREATE INDEX IF NOT EXISTS idx_activity_events_user ON activity_events(user_id);
+  `;
+  await targetPool.query(ddl);
+}
 var dbInstance = createMockDb();
 var _isUsingPersistentDb = false;
-var connectionString = process.env.DATABASE_URL || process.env.POSTGRES_URL;
+var pool = null;
+var dbReadyPromise = null;
+function sanitizeDatabaseUrl(url) {
+  let cleaned = url.replace(/([?&])channel_binding=[^&]*(&|$)/g, "$1");
+  cleaned = cleaned.replace(/\?&/, "?").replace(/[?&]$/, "");
+  return cleaned;
+}
+var rawConnectionString = (process.env.DATABASE_URL || process.env.POSTGRES_URL || "").trim();
+var connectionString = sanitizeDatabaseUrl(rawConnectionString);
 if (connectionString || process.env.SQL_HOST && process.env.SQL_USER) {
   try {
     const isSocket = process.env.SQL_HOST?.startsWith("/cloudsql/");
-    const pool = new Pool(
+    pool = new Pool(
       connectionString ? {
         connectionString,
         ssl: connectionString.includes("localhost") || connectionString.includes("127.0.0.1") ? false : { rejectUnauthorized: false },
-        connectionTimeoutMillis: 4e3
+        connectionTimeoutMillis: 15e3,
+        max: 10
       } : isSocket ? {
         host: process.env.SQL_HOST,
         user: process.env.SQL_USER,
         password: process.env.SQL_PASSWORD,
         database: process.env.SQL_DB_NAME || "postgres",
-        connectionTimeoutMillis: 2e3
+        connectionTimeoutMillis: 3e3
       } : {
         host: process.env.SQL_HOST,
         user: process.env.SQL_USER,
         password: process.env.SQL_PASSWORD,
         database: process.env.SQL_DB_NAME || "postgres",
         port: Number(process.env.SQL_PORT) || 5432,
-        connectionTimeoutMillis: 2e3
+        connectionTimeoutMillis: 3e3
       }
     );
-    pool.query("SELECT 1", (err) => {
-      if (err) {
-        console.warn("[TECH ARENA DB] PostgreSQL connection unavailable, active with in-memory tournament engine.");
-      } else {
-        console.log("[TECH ARENA DB] Successfully connected to PostgreSQL instance.");
-        dbInstance = drizzle(pool, { schema: schema_exports });
-        _isUsingPersistentDb = true;
-      }
-    });
+    dbInstance = drizzle(pool, { schema: schema_exports });
+    _isUsingPersistentDb = true;
   } catch (err) {
-    console.warn("[TECH ARENA DB] Initializing with in-memory database engine:", err);
+    console.warn("[TECH ARENA DB] Error configuring PostgreSQL connection, defaulting to in-memory store:", err);
+    dbInstance = createMockDb();
+    _isUsingPersistentDb = false;
   }
+}
+async function ensureDatabaseReady() {
+  if (!pool || !_isUsingPersistentDb) return;
+  if (!dbReadyPromise) {
+    dbReadyPromise = (async () => {
+      try {
+        await pool.query("SELECT 1");
+        await initDatabaseSchema(pool);
+        console.log("[TECH ARENA DB] Successfully verified Neon/PostgreSQL connection and synchronized schema tables.");
+      } catch (err) {
+        console.warn("[TECH ARENA DB] Neon/PostgreSQL connection check failed, operating with in-memory store fallback:", err);
+        _isUsingPersistentDb = false;
+        dbInstance = createMockDb();
+      }
+    })();
+  }
+  await dbReadyPromise;
 }
 var db = new Proxy({}, {
   get: (_target, prop) => {
@@ -888,23 +1108,7 @@ async function requireAuth(req, res, next) {
         });
       }
       if (!participant) {
-        if (!isUsingPersistentDb()) {
-          const [restored] = await db.insert(users).values({
-            uid: `team_${verified.userId}`,
-            email: `${verified.code.toLowerCase().replace(/[^a-z0-9]/g, "_")}@techarena.edu`,
-            role: "participant",
-            name: `Team ${verified.code}`,
-            college: "Tech Arena Campus",
-            teamName: `Team ${verified.code}`,
-            teamMembers: ["Participant 1"],
-            code: verified.code,
-            zone: "South Zone",
-            isBlocked: false
-          }).returning();
-          participant = restored;
-        } else {
-          return res.status(401).json({ error: "Terminal session expired or team not found." });
-        }
+        return res.status(401).json({ error: "Terminal session expired or team not found." });
       }
       if (participant.isRemoved) {
         return res.status(403).json({
@@ -3729,7 +3933,7 @@ adminRouter.post("/admin/participants/:id/authorize-retake", requireAuth, requir
 });
 
 // server.ts
-dotenv.config();
+dotenv2.config();
 var app = express();
 var PORT = 3e3;
 app.use(express.json());
@@ -3750,8 +3954,8 @@ app.use((req, _res, next) => {
 var seedPromise = null;
 function ensureDatabaseSeeded() {
   if (!seedPromise) {
-    seedPromise = seedTournamentDatabase().then(() => syncRound2Questions()).catch((err) => {
-      console.error("Error during initial database seed check:", err);
+    seedPromise = ensureDatabaseReady().then(() => seedTournamentDatabase()).then(() => syncRound2Questions()).catch((err) => {
+      console.error("Error during initial database initialization/seed check:", err);
     });
   }
   return seedPromise;
